@@ -26,6 +26,7 @@ type Shape = {
   width: number;
   opacity?: number;
   globalCompositeOperation?: "source-over" | "destination-out";
+  fill?: string | null;
 };
 
 export default function Whiteboard() {
@@ -61,20 +62,7 @@ export default function Whiteboard() {
       timestamp: new Date().toISOString(),
     };
     
-    // On refresh, clear persisted boards and start fresh (per UX request)
-    try {
-      // Client-side preflight: allow analysis if any board has an uploaded background image.
-      const totalStrokes = boards.reduce((acc, b) => acc + ((b.strokes || []).length || 0), 0);
-      const anyHasImage = boards.some(b => !!b.backgroundImage);
-      if (!anyHasImage && totalStrokes <= 5) {
-        setError('Please draw more (at least 5 stroke points) or upload an image to analyze.');
-        setAnalyzing(false);
-        setStage('idle');
-        return;
-      }
-      localStorage.removeItem('boards');
-      localStorage.removeItem('activeBoardId');
-    } catch (e) {}
+    // On mount, start with a fresh default board
     setBoards([defaultBoard]);
     setActiveBoardId(defaultBoard.id);
   }, []);
@@ -186,8 +174,8 @@ export default function Whiteboard() {
       )
     );
     setError(null);
-  setAnalyzing(true);
-  setStage('analyzing');
+    setAnalyzing(true);
+    setStage('analyzing');
     // abort any previous
     if (abortCtrlRef.current) {
       try { abortCtrlRef.current.abort(); } catch {}
@@ -308,7 +296,7 @@ export default function Whiteboard() {
       try { abortCtrlRef.current.abort(); } catch {};
       setAnalyzing(false);
       setBeatovenStatus('cancelled');
-  setStage('cancelled');
+      setStage('cancelled');
     }
   }, []);
 
@@ -326,6 +314,7 @@ export default function Whiteboard() {
   const [selectedShape, setSelectedShape] = useState<ShapeType>('rectangle');
   const [currentShape, setCurrentShape] = useState<Shape | null>(null);
   const [isDrawingShape, setIsDrawingShape] = useState(false);
+  const [fillMode, setFillMode] = useState(false);
   
   const stageRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -730,7 +719,7 @@ export default function Whiteboard() {
     const entry: SavedBoard = {
       id: `${Date.now()}-${Math.round(Math.random()*999)}`,
       thumb,
-  fullImage: full,
+      fullImage: full,
       trackUrl: convertedMusic || null,
       timestamp: new Date().toISOString(),
     };
@@ -905,7 +894,7 @@ export default function Whiteboard() {
   }, [boards, size.w, size.h, generateThumbnailForBoard]);
 
   // Helper function to render a shape
-  const renderShape = useCallback((shape: Shape, key: string) => {
+  const renderShape = useCallback((shape: Shape, key: string, index?: number) => {
     const { type, startX, startY, endX, endY, color, width, opacity, globalCompositeOperation } = shape;
     
     switch (type) {
@@ -918,9 +907,11 @@ export default function Whiteboard() {
             width={Math.abs(endX - startX)}
             height={Math.abs(endY - startY)}
             stroke={color}
+            fill={shape.fill || undefined}
             strokeWidth={width}
             opacity={opacity || 1}
             globalCompositeOperation={globalCompositeOperation}
+            onClick={(e) => { if (typeof index === 'number') handleShapeClick(index, e); }}
           />
         );
       case 'circle':
@@ -935,9 +926,11 @@ export default function Whiteboard() {
             y={centerY}
             radius={radius}
             stroke={color}
+            fill={shape.fill || undefined}
             strokeWidth={width}
             opacity={opacity || 1}
             globalCompositeOperation={globalCompositeOperation}
+            onClick={(e) => { if (typeof index === 'number') handleShapeClick(index, e); }}
           />
         );
       case 'line':
@@ -949,6 +942,7 @@ export default function Whiteboard() {
             strokeWidth={width}
             opacity={opacity || 1}
             globalCompositeOperation={globalCompositeOperation}
+            onClick={(e) => { if (typeof index === 'number') handleShapeClick(index, e); }}
           />
         );
       case 'triangle':
@@ -958,10 +952,12 @@ export default function Whiteboard() {
             key={key}
             points={[startX, endY, midX, startY, endX, endY, startX, endY]}
             stroke={color}
+            fill={shape.fill || undefined}
             strokeWidth={width}
             opacity={opacity || 1}
             globalCompositeOperation={globalCompositeOperation}
             closed={true}
+            onClick={(e) => { if (typeof index === 'number') handleShapeClick(index, e); }}
           />
         );
       default:
@@ -971,15 +967,46 @@ export default function Whiteboard() {
 
   // Memoize shape rendering for better performance
   const renderedShapes = useMemo(() => {
-    return shapes.map((shape, i) => renderShape(shape, `shape-${i}`));
+    return shapes.map((shape, i) => renderShape(shape, `shape-${i}`, i));
   }, [shapes, renderShape]);
+
+  // Handle clicks on shapes: fill when fillMode, delete when erasing is active and erasing should remove full shape
+  const handleShapeClick = useCallback((index: number, e: any) => {
+    // prevent stage from starting a new stroke when clicking shapes
+    e.cancelBubble = true;
+    e.evt?.stopImmediatePropagation?.();
+    const shape = shapes[index];
+    if (!shape) return;
+
+    if (fillMode) {
+      // Toggle fill: if already same color, remove fill; otherwise set fill to current color
+      const newShapes = shapes.slice();
+      const existing = shape.fill || null;
+      const nextFill = existing === color ? null : color;
+      newShapes[index] = { ...shape, fill: nextFill };
+      setBoards(prev => prev.map(b => b.id === activeBoardId ? { ...b, shapes: newShapes } : b));
+      addToHistory({ strokes, shapes: newShapes });
+      return;
+    }
+
+    // If erasing and toolMode is shape, delete the whole shape
+    if (erasing && toolMode === 'shape') {
+      const newShapes = shapes.slice();
+      newShapes.splice(index, 1);
+      setBoards(prev => prev.map(b => b.id === activeBoardId ? { ...b, shapes: newShapes } : b));
+      addToHistory({ strokes, shapes: newShapes });
+      return;
+    }
+
+    // otherwise, do nothing special
+  }, [shapes, fillMode, color, addToHistory, activeBoardId, erasing, toolMode, strokes]);
 
   // Memoize stroke rendering for better performance
   const renderedStrokes = useMemo(() => {
     // For rough brush strokes, render several jittered copies to simulate a rough stroke
-  return strokes.flatMap((s, i) => {
+    return strokes.flatMap((s, i) => {
       const brushProps = getBrushProperties(s.brushType, s.width);
-  if (s.brushType === 'rough') {
+      if (s.brushType === 'rough') {
         // number of jittered lines (2-5)
         const copies = Math.min(5, Math.max(2, Math.round(s.width / 3)));
         // small offset range based on width
@@ -1079,7 +1106,7 @@ export default function Whiteboard() {
   const renderedCurrentStroke = useMemo(() => {
     if (!current) return null;
     const brushProps = getBrushProperties(current.brushType, current.width);
-  if (current.brushType === 'rough') {
+    if (current.brushType === 'rough') {
       const copies = Math.min(5, Math.max(2, Math.round(current.width / 3)));
       const offsetRange = Math.max(1, current.width * 0.6);
       return (
@@ -1204,7 +1231,7 @@ export default function Whiteboard() {
       isValid: (board.backgroundImage && board.backgroundImage.length > 100) || (board.strokes && board.strokes.length >= 5)
     }));
   }, [boards]);
-
+  
   return (
     <div className="w-full max-w-7xl mx-auto">
       <style>{`
@@ -1478,6 +1505,15 @@ export default function Whiteboard() {
                   <option value="triangle">Triangle</option>
                 </select>
               </label>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setFillMode(v => !v)}
+                  className={`px-4 py-2 rounded-xl border transition-all duration-200 ${fillMode ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'}`}
+                  title="Fill shapes with the current color"
+                >
+                  {fillMode ? 'Fill: ON' : 'Fill: OFF'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -1820,9 +1856,7 @@ export default function Whiteboard() {
           </div>
         </div>
 
-        <div className="mt-6">
-          <p className="text-sm text-gray-600">Convert your drawing into a musical piece — compose high-quality music from your drawing.</p>
-        </div>
+        {/* Removed duplicate marketing sentence as requested */}
 
         {/* Results area */}
         <div className="mt-6">
