@@ -60,7 +60,7 @@ export default function Header() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2M7 4h10M7 4l-2 16h14l-2-16M10 9v6M14 9v6" />
                 </svg>
               </div>
-              <span className="text-lg font-light text-gray-900 tracking-tight">Musical Painter</span>
+              <span className="text-lg font-light text-gray-900 tracking-tight">SketchTunes</span>
             </div>
             
             {/* Loading state */}
@@ -84,7 +84,7 @@ export default function Header() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2M7 4h10M7 4l-2 16h14l-2-16M10 9v6M14 9v6" />
               </svg>
             </div>
-            <span className="text-lg font-light text-gray-900 tracking-tight">Musical Painter</span>
+            <span className="text-lg font-light text-gray-900 tracking-tight">SketchTunes</span>
           </div>
           
           {/* Auth Section */}
