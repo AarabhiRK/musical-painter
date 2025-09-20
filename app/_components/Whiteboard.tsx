@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Stage, Layer, Line, Rect } from "react-konva";
 
 type Point = number;
-type BrushType = 'normal' | 'rough' | 'thin' | 'highlighter';
+type BrushType = 'normal' | 'rough' | 'thin' | 'highlighter' | 'spray' | 'marker';
 type Stroke = { 
   points: Point[]; 
   color: string; 
@@ -32,6 +32,22 @@ export default function Whiteboard() {
   // Brush properties helper functions
   const getBrushProperties = (type: BrushType, baseWidth: number) => {
     switch (type) {
+      case 'spray':
+        return {
+          width: Math.max(2, baseWidth),
+          opacity: 0.6,
+          tension: 0.2,
+          lineCap: 'round' as const,
+          lineJoin: 'round' as const,
+        };
+      case 'marker':
+        return {
+          width: baseWidth * 1.6,
+          opacity: 0.55,
+          tension: 0.25,
+          lineCap: 'round' as const,
+          lineJoin: 'round' as const,
+        };
       case 'rough':
         return {
           width: baseWidth * 1.2,
@@ -106,14 +122,18 @@ export default function Whiteboard() {
 
   const onDown = useCallback((e: any) => {
     const pos = e.target.getStage().getPointerPosition();
-    const brushProps = getBrushProperties(brushType, width);
+    // If erasing, force normal brush and white color so erasing is just painting white
+    const effectiveBrushType: BrushType = erasing ? 'normal' : brushType;
+    const effectiveColor = erasing ? '#ffffff' : color;
+    const brushProps = getBrushProperties(effectiveBrushType, width);
     const s: Stroke = {
       points: [pos.x, pos.y],
-      color,
+      color: effectiveColor,
       width: brushProps.width,
-      brushType,
+      brushType: effectiveBrushType,
       opacity: brushProps.opacity,
-      globalCompositeOperation: erasing ? "destination-out" : "source-over",
+      // keep default compositing (draw white over canvas) when erasing
+      globalCompositeOperation: 'source-over',
     };
     setCurrent(s);
   }, [brushType, width, color, erasing]);
@@ -181,8 +201,89 @@ export default function Whiteboard() {
 
   // Memoize stroke rendering for better performance
   const renderedStrokes = useMemo(() => {
-    return strokes.map((s, i) => {
+    // For rough brush strokes, render several jittered copies to simulate a rough stroke
+  return strokes.flatMap((s, i) => {
       const brushProps = getBrushProperties(s.brushType, s.width);
+  if (s.brushType === 'rough') {
+        // number of jittered lines (2-5)
+        const copies = Math.min(5, Math.max(2, Math.round(s.width / 3)));
+        // small offset range based on width
+        const offsetRange = Math.max(1, s.width * 0.6);
+        return Array.from({ length: copies }).map((_, ci) => {
+          const jittered = s.points.map((val, idx) => {
+            // apply jitter to x (even indices) and y (odd indices)
+            if (idx % 2 === 0) return val + (Math.random() * 2 - 1) * offsetRange;
+            return val + (Math.random() * 2 - 1) * offsetRange;
+          });
+          // vary width/opacity slightly per copy for texture
+          const w = Math.max(1, brushProps.width * (0.9 + Math.random() * 0.3));
+          const op = Math.max(0.4, Math.min(1, brushProps.opacity! * (0.8 + Math.random() * 0.4)));
+          return (
+            <Line
+              key={`${i}-rough-${ci}`}
+              points={jittered}
+              stroke={s.color}
+              strokeWidth={w}
+              opacity={op}
+              tension={brushProps.tension}
+              lineCap={brushProps.lineCap}
+              lineJoin={brushProps.lineJoin}
+              globalCompositeOperation={s.globalCompositeOperation}
+            />
+          );
+        });
+      }
+      // Spray brush: render small scattered dots along the path
+      if (s.brushType === 'spray') {
+        // density related to width
+        const density = Math.min(6, Math.max(2, Math.round(s.width / 2)));
+        const dots: any[] = [];
+        for (let p = 0; p < s.points.length; p += 2) {
+          const x = s.points[p];
+          const y = s.points[p + 1];
+          for (let d = 0; d < density; d++) {
+            const rx = x + (Math.random() * 2 - 1) * s.width * 0.7;
+            const ry = y + (Math.random() * 2 - 1) * s.width * 0.7;
+            const r = Math.max(1, Math.random() * (brushProps.width / 2));
+            dots.push(
+              <Line
+                key={`${i}-spray-${p}-${d}`}
+                points={[rx, ry, rx + 0.01, ry + 0.01]}
+                stroke={s.color}
+                strokeWidth={r}
+                opacity={Math.max(0.15, brushProps.opacity! * Math.random())}
+                tension={0}
+                lineCap="round"
+                lineJoin="round"
+                globalCompositeOperation={s.globalCompositeOperation}
+              />
+            );
+          }
+        }
+        return dots;
+      }
+
+      // Marker brush: render the main line plus a few faded wider backups to simulate soft edge
+      if (s.brushType === 'marker') {
+        const backups = [0, 1, 2].map((bi) => {
+          const mult = 1 + bi * 0.5;
+          return (
+            <Line
+              key={`${i}-marker-${bi}`}
+              points={s.points}
+              stroke={s.color}
+              strokeWidth={brushProps.width * mult}
+              opacity={Math.max(0.12, brushProps.opacity! * (0.7 - bi * 0.25))}
+              tension={brushProps.tension}
+              lineCap={brushProps.lineCap}
+              lineJoin={brushProps.lineJoin}
+              globalCompositeOperation={s.globalCompositeOperation}
+            />
+          );
+        });
+        return backups;
+      }
+
       return (
         <Line
           key={i}
@@ -203,6 +304,87 @@ export default function Whiteboard() {
   const renderedCurrentStroke = useMemo(() => {
     if (!current) return null;
     const brushProps = getBrushProperties(current.brushType, current.width);
+  if (current.brushType === 'rough') {
+      const copies = Math.min(5, Math.max(2, Math.round(current.width / 3)));
+      const offsetRange = Math.max(1, current.width * 0.6);
+      return (
+        <>
+          {Array.from({ length: copies }).map((_, ci) => {
+            const jittered = current.points.map((val, idx) => {
+              if (idx % 2 === 0) return val + (Math.random() * 2 - 1) * offsetRange;
+              return val + (Math.random() * 2 - 1) * offsetRange;
+            });
+            const w = Math.max(1, brushProps.width * (0.9 + Math.random() * 0.3));
+            const op = Math.max(0.4, Math.min(1, brushProps.opacity! * (0.8 + Math.random() * 0.4)));
+            return (
+              <Line
+                key={`current-rough-${ci}`}
+                points={jittered}
+                stroke={current.color}
+                strokeWidth={w}
+                opacity={op}
+                tension={brushProps.tension}
+                lineCap={brushProps.lineCap}
+                lineJoin={brushProps.lineJoin}
+                globalCompositeOperation={current.globalCompositeOperation}
+              />
+            );
+          })}
+        </>
+      );
+    }
+
+    if (current.brushType === 'spray') {
+      const density = Math.min(6, Math.max(2, Math.round(current.width / 2)));
+      return (
+        <>
+          {current.points.map((val, idx) => {
+            if (idx % 2 === 1) return null;
+            const x = current.points[idx];
+            const y = current.points[idx + 1];
+            return Array.from({ length: density }).map((_, di) => {
+              const rx = x + (Math.random() * 2 - 1) * current.width * 0.7;
+              const ry = y + (Math.random() * 2 - 1) * current.width * 0.7;
+              const r = Math.max(1, Math.random() * (brushProps.width / 2));
+              return (
+                <Line
+                  key={`current-spray-${idx}-${di}`}
+                  points={[rx, ry, rx + 0.01, ry + 0.01]}
+                  stroke={current.color}
+                  strokeWidth={r}
+                  opacity={Math.max(0.15, brushProps.opacity! * Math.random())}
+                  tension={0}
+                  lineCap="round"
+                  lineJoin="round"
+                  globalCompositeOperation={current.globalCompositeOperation}
+                />
+              );
+            });
+          })}
+        </>
+      );
+    }
+
+    if (current.brushType === 'marker') {
+      return (
+        <>
+          {[0, 1, 2].map((bi) => (
+            <Line
+              key={`current-marker-${bi}`}
+              points={current.points}
+              stroke={current.color}
+              strokeWidth={brushProps.width * (1 + bi * 0.5)}
+              opacity={Math.max(0.12, brushProps.opacity! * (0.7 - bi * 0.25))}
+              tension={brushProps.tension}
+              lineCap={brushProps.lineCap}
+              lineJoin={brushProps.lineJoin}
+              globalCompositeOperation={current.globalCompositeOperation}
+            />
+          ))}
+        </>
+      );
+    }
+
     return (
       <Line
         points={current.points}
@@ -259,6 +441,8 @@ export default function Whiteboard() {
               >
                 <option value="normal">Normal</option>
                 <option value="rough">Rough</option>
+                <option value="spray">Spray</option>
+                <option value="marker">Marker</option>
                 <option value="thin">Thin</option>
                 <option value="highlighter">Highlighter</option>
               </select>
@@ -301,9 +485,9 @@ export default function Whiteboard() {
                   ? "bg-gray-800 text-white border-gray-800 shadow-sm" 
                   : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
               }`}
-              title="Toggle Eraser (draw with transparency)"
+              title="Eraser: paints white over the canvas (independent of brush type)"
             >
-              {erasing ? "Eraser ON" : "Eraser OFF"}
+              Eraser
             </button>
             
             <button 
