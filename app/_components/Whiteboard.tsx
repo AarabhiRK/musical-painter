@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { Stage, Layer, Line, Rect } from "react-konva";
+import { Stage, Layer, Line, Rect, Image as KonvaImage, Transformer } from "react-konva";
 import AudioPlayer from 'react-h5-audio-player';
 import 'react-h5-audio-player/lib/styles.css';
 
@@ -57,6 +57,41 @@ export default function Whiteboard() {
 
   // Small helper to get current palette swatches
   const activeSwatches = selectedPalette === 'Custom' ? userSwatches : palettes[selectedPalette] || [];
+
+  // Background image for the board (upload / drag & drop)
+  const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
+  const [bgImageObj, setBgImageObj] = useState<HTMLImageElement | null>(null);
+  // Transform state for the uploaded image
+  const [bgTransform, setBgTransform] = useState({ x: 0, y: 0, width: 0, height: 0, rotation: 0 });
+  const [bgSelected, setBgSelected] = useState(false);
+  const bgImageRef = useRef<any>(null);
+  const transformerRef = useRef<any>(null);
+  const [moveMode, setMoveMode] = useState(false);
+
+  // Gallery of saved boards stored in localStorage (no auth)
+  type SavedBoard = { id: string; thumb: string; fullImage?: string; trackUrl?: string | null; timestamp: string };
+  const [savedBoards, setSavedBoards] = useState<SavedBoard[]>([]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('savedBoards');
+      if (raw) setSavedBoards(JSON.parse(raw));
+    } catch (e) {
+      setSavedBoards([]);
+    }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('savedBoards', JSON.stringify(savedBoards || [])); } catch (e) {}
+  }, [savedBoards]);
+
+  // create HTMLImageElement when backgroundImage changes
+  useEffect(() => {
+    if (!backgroundImage) { setBgImageObj(null); return; }
+    const img = new window.Image();
+    img.src = backgroundImage;
+    img.crossOrigin = 'anonymous';
+    img.onload = () => setBgImageObj(img);
+    img.onerror = () => setBgImageObj(null);
+  }, [backgroundImage]);
 
   // Export and analyze function
   const analyzeDrawing = async () => {
@@ -134,6 +169,7 @@ export default function Whiteboard() {
   const [erasing, setErasing] = useState(false);
   const stageRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
   
   // Undo/Redo state management
@@ -205,6 +241,34 @@ export default function Whiteboard() {
     if (containerRef.current) ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);
+
+  // initialize bgTransform when image loads and size is known
+  useEffect(() => {
+    if (!bgImageObj || !size) return;
+    const iw = bgImageObj.width;
+    const ih = bgImageObj.height;
+    const cw = size.w;
+    const ch = size.h;
+    const scale = Math.min(cw / iw, ch / ih);
+    const w = iw * scale;
+    const h = ih * scale;
+    setBgTransform({ x: (cw - w) / 2, y: (ch - h) / 2, width: w, height: h, rotation: 0 });
+  }, [bgImageObj, size]);
+
+  // When bgSelected changes, attach the transformer to the selected node
+  useEffect(() => {
+    const tr = transformerRef.current;
+    const node = bgImageRef.current;
+    if (tr && node) {
+      if (bgSelected) {
+        tr.nodes([node]);
+        tr.getLayer()?.batchDraw();
+      } else {
+        tr.nodes([]);
+        tr.getLayer()?.batchDraw();
+      }
+    }
+  }, [bgSelected]);
 
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -308,6 +372,65 @@ export default function Whiteboard() {
     a.href = uri;
     a.download = "drawing.png";
     a.click();
+  }, []);
+
+  // Download music helper
+  const downloadMusic = useCallback(() => {
+    if (!convertedMusic) return;
+    const a = document.createElement('a');
+    a.href = convertedMusic;
+    a.download = 'composition.mp3';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, [convertedMusic]);
+
+  // Upload / Drag & Drop handlers
+  const handleFile = useCallback((file: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = String(reader.result || '');
+      setBackgroundImage(data);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const f = e.dataTransfer?.files?.[0];
+    if (f) handleFile(f);
+  }, [handleFile]);
+
+  const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); }, []);
+
+  const openFilePicker = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  // Save current board (thumbnail + track) to gallery
+  const saveBoardToGallery = useCallback(async () => {
+    if (!stageRef.current) return;
+    // thumbnail small
+    const thumb = stageRef.current.toDataURL({ pixelRatio: 0.5 });
+    const full = stageRef.current.toDataURL({ pixelRatio: 2 });
+    const entry: SavedBoard = {
+      id: `${Date.now()}-${Math.round(Math.random()*999)}`,
+      thumb,
+  fullImage: full,
+      trackUrl: convertedMusic || null,
+      timestamp: new Date().toISOString(),
+    };
+    setSavedBoards((s) => [entry, ...s].slice(0, 200));
+  }, [convertedMusic]);
+
+  const loadBoard = useCallback((entry: SavedBoard) => {
+    if (entry.fullImage) setBackgroundImage(entry.fullImage);
+    if (entry.trackUrl) setConvertedMusic(entry.trackUrl);
+  }, []);
+
+  const deleteBoard = useCallback((id: string) => {
+    setSavedBoards((s) => s.filter((x) => x.id !== id));
   }, []);
 
   // Memoize stroke rendering for better performance
@@ -695,23 +818,60 @@ export default function Whiteboard() {
             >
               Export PNG
             </button>
+            
+            <button
+              onClick={openFilePicker}
+              className="px-5 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
+              title="Upload an image to use as the board background"
+            >
+              Upload Image
+            </button>
+
+            <button
+              onClick={() => setMoveMode((v) => !v)}
+              className={`px-4 py-2 rounded-xl border transition-all duration-200 ${moveMode ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'}`}
+              title="Toggle image edit mode — enable to move/resize the image"
+            >
+              {moveMode ? 'Image Edit: ON' : 'Image Edit: OFF'}
+            </button>
+
+            {backgroundImage && (
+              <button
+                onClick={() => { setBackgroundImage(null); setBgImageObj(null); setBgSelected(false); }}
+                className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
+                title="Remove background image"
+              >
+                Clear Background
+              </button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={(e) => handleFile(e.target.files?.[0] || null)}
+              className="hidden"
+            />
           </div>
         </div>
       </div>
 
       {/* Canvas container with enhanced styling */}
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-        <div ref={containerRef} className="w-full">
+  <div ref={containerRef} className="w-full" onDrop={onDrop} onDragOver={onDragOver}>
           <Stage
             key="whiteboard-stage"
             ref={stageRef}
             width={size.w}
             height={size.h}
-            onMouseDown={onDown}
+            onMouseDown={(e) => {
+              const clickedOnEmpty = e.target === e.target.getStage();
+              if (clickedOnEmpty) setBgSelected(false);
+              onDown(e);
+            }}
             onTouchStart={onDown}
-            onMousemove={onMove}
+            onMouseMove={onMove}
             onTouchMove={onMove}
-            onMouseup={onUp}
+            onMouseUp={onUp}
             onTouchEnd={onUp}
             style={{ 
               background: "#ffffff", 
@@ -720,8 +880,57 @@ export default function Whiteboard() {
             }}
           >
             <Layer>
-              {/* White background to ensure opaque export */}
-              <Rect x={0} y={0} width={size.w} height={size.h} fill="#ffffff" />
+              {/* Background image (if uploaded) rendered beneath strokes and is draggable/transformable */}
+              {bgImageObj && (
+                <>
+                  <KonvaImage
+                    image={bgImageObj}
+                    x={bgTransform.x}
+                    y={bgTransform.y}
+                    width={bgTransform.width}
+                    height={bgTransform.height}
+                    rotation={bgTransform.rotation}
+                    draggable={moveMode}
+                    ref={bgImageRef}
+                    onClick={(e) => {
+                      e.cancelBubble = true; // prevent stage from starting a stroke
+                      if (moveMode) setBgSelected(true);
+                    }}
+                    onTap={(e) => {
+                      e.cancelBubble = true;
+                      if (moveMode) setBgSelected(true);
+                    }}
+                    onDragEnd={(e) => {
+                      const node = e.target;
+                      setBgTransform((prev) => ({ ...prev, x: node.x(), y: node.y() }));
+                    }}
+                    onTransformEnd={() => {
+                      const node = bgImageRef.current;
+                      if (!node) return;
+                      const scaleX = node.scaleX() || 1;
+                      const scaleY = node.scaleY() || 1;
+                      node.scaleX(1);
+                      node.scaleY(1);
+                      setBgTransform({
+                        x: node.x(),
+                        y: node.y(),
+                        width: Math.max(8, node.width() * scaleX),
+                        height: Math.max(8, node.height() * scaleY),
+                        rotation: node.rotation() || 0,
+                      });
+                    }}
+                  />
+                  {bgSelected && (
+                    <Transformer
+                      ref={transformerRef}
+                      keepRatio={true}
+                      enabledAnchors={["top-left","top-right","bottom-left","bottom-right","middle-left","middle-right","top-center","bottom-center"]}
+                    />
+                  )}
+                </>
+              )}
+              {/* White background to ensure opaque export when no bg image */}
+              {!bgImageObj && <Rect x={0} y={0} width={size.w} height={size.h} fill="#ffffff" />}
               {renderedStrokes}
               {renderedCurrentStroke}
             </Layer>
