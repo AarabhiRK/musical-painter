@@ -31,8 +31,8 @@ export async function POST(req: NextRequest) {
 
     // 1️⃣ Generate per-board musical briefs
     const perBoardResults: Array<any> = [];
-    for (let i = 0; i < validBoards.length; i++) {
-      const b = validBoards[i];
+    for (let i = 0; i < limitedBoards.length; i++) {
+      const b = limitedBoards[i];
       const humanPrompt = `
 You are a music assistant. Convert the attached board into a concise, evocative musical brief for Beatoven. Include:
 - Mood, genre, tempo/BPM
@@ -68,7 +68,7 @@ Start with 'Background music:' and keep it natural-language, ready for Beatoven.
 Ensure coherence: align tempo, crossfade 1-3s, maintain sonic motifs, avoid abrupt changes. Output ~${totalDuration}s background music track of ordered segments suitable for scenes/looping.
     `;
 
-    const combinedPrompt = `Compose a single ${totalDuration}-second track composed of ${boards.length} ordered segments. ${sharedHints}\n\n${combinedSegmentsText}`;
+    const combinedPrompt = `Compose a single ${totalDuration}-second track composed of ${num} ordered segments. ${sharedHints}\n\n${combinedSegmentsText}`;
 
     // 3️⃣ Optional Gemini refiner for a polished prompt
     let refinedPrompt: string | null = null;
