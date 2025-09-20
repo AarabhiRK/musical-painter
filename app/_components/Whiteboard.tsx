@@ -17,11 +17,73 @@ type Stroke = {
 };
 
 export default function Whiteboard() {
-  // Converted music analysis state
-  const [convertedMusic, setConvertedMusic] = useState<string | null>(null);
+  // Board system - multiple tabs for different drawings
+  type Board = {
+    id: string;
+    name: string;
+    strokes: any[];
+    backgroundImage: string | null;
+    bgTransform: { x: number; y: number; width: number; height: number; rotation: number };
+    convertedMusic: string | null;
+    timestamp: string;
+  };
+  
+  const [boards, setBoards] = useState<Board[]>([]);
+  const [activeBoardId, setActiveBoardId] = useState<string>('');
+  const [maxBoards] = useState(4);
+
+  // Initialize with default board
+  useEffect(() => {
+    const defaultBoard: Board = {
+      id: 'board-1',
+      name: 'Board 1',
+      strokes: [],
+      backgroundImage: null,
+      bgTransform: { x: 0, y: 0, width: 0, height: 0, rotation: 0 },
+      convertedMusic: null,
+      timestamp: new Date().toISOString(),
+    };
+    
+    try {
+      const savedBoards = localStorage.getItem('boards');
+      const savedActiveId = localStorage.getItem('activeBoardId');
+      
+      if (savedBoards) {
+        const parsedBoards = JSON.parse(savedBoards);
+        setBoards(parsedBoards.length > 0 ? parsedBoards : [defaultBoard]);
+        setActiveBoardId(savedActiveId || parsedBoards[0]?.id || defaultBoard.id);
+      } else {
+        setBoards([defaultBoard]);
+        setActiveBoardId(defaultBoard.id);
+      }
+    } catch (e) {
+      setBoards([defaultBoard]);
+      setActiveBoardId(defaultBoard.id);
+    }
+  }, []);
+
+  // Save boards to localStorage whenever boards change
+  useEffect(() => {
+    try {
+      localStorage.setItem('boards', JSON.stringify(boards));
+      localStorage.setItem('activeBoardId', activeBoardId);
+    } catch (e) {
+      console.error('Failed to save boards to localStorage:', e);
+    }
+  }, [boards, activeBoardId]);
+
+  // Get current active board - memoized to prevent infinite loops
+  const activeBoard = useMemo(() => {
+    return boards.find(board => board.id === activeBoardId) || boards[0];
+  }, [boards, activeBoardId]);
+
+  // Converted music analysis state - derived from active board
   const [analyzing, setAnalyzing] = useState(false);
   const [stage, setStage] = useState<'idle'|'analyzing'|'composing'|'done'|'cancelled'>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  // Get converted music directly from active board
+  const convertedMusic = activeBoard?.convertedMusic || null;
   const [beatovenStatus, setBeatovenStatus] = useState<string | null>(null);
   const [beatovenTaskId, setBeatovenTaskId] = useState<string | null>(null);
   // promptPreview is intentionally not surfaced in UI; server logs to data/runs.json
@@ -58,15 +120,17 @@ export default function Whiteboard() {
   // Small helper to get current palette swatches
   const activeSwatches = selectedPalette === 'Custom' ? userSwatches : palettes[selectedPalette] || [];
 
-  // Background image for the board (upload / drag & drop)
-  const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
+  // Background image for the board (upload / drag & drop) - derived from active board
   const [bgImageObj, setBgImageObj] = useState<HTMLImageElement | null>(null);
-  // Transform state for the uploaded image
-  const [bgTransform, setBgTransform] = useState({ x: 0, y: 0, width: 0, height: 0, rotation: 0 });
+  // Transform state for the uploaded image - derived from active board
   const [bgSelected, setBgSelected] = useState(false);
   const bgImageRef = useRef<any>(null);
   const transformerRef = useRef<any>(null);
   const [moveMode, setMoveMode] = useState(false);
+
+  // Get background image and transform directly from active board
+  const backgroundImage = activeBoard?.backgroundImage || null;
+  const bgTransform = activeBoard?.bgTransform || { x: 0, y: 0, width: 0, height: 0, rotation: 0 };
 
   // Gallery of saved boards stored in localStorage (no auth)
   type SavedBoard = { id: string; thumb: string; fullImage?: string; trackUrl?: string | null; timestamp: string };
@@ -95,7 +159,14 @@ export default function Whiteboard() {
 
   // Export and analyze function
   const analyzeDrawing = async () => {
-    setConvertedMusic(null);
+    // Clear converted music from active board
+    setBoards(prevBoards => 
+      prevBoards.map(board => 
+        board.id === activeBoardId 
+          ? { ...board, convertedMusic: null }
+          : board
+      )
+    );
     setError(null);
   setAnalyzing(true);
   setStage('analyzing');
@@ -119,20 +190,26 @@ export default function Whiteboard() {
       const data = await res.json();
       // Expected shape: { prompt, task_id, trackUrl, beatovenMeta, geminiRaw }
       if (data?.trackUrl) {
-        setConvertedMusic(data.trackUrl);
+        // Update the active board directly
+        setBoards(prevBoards => 
+          prevBoards.map(board => 
+            board.id === activeBoardId 
+              ? { ...board, convertedMusic: data.trackUrl }
+              : board
+          )
+        );
         setBeatovenStatus(data?.beatovenMeta?.status || 'composed');
         setBeatovenTaskId(data?.task_id || null);
         // do not surface prompt/task to UI; server logs runs to data/runs.json
         setStage('done');
       } else if (data?.prompt) {
         // Server returned a parsed prompt but no final track yet - switch to composing state silently
-        setConvertedMusic(null);
         setBeatovenTaskId(data?.task_id || null);
         setBeatovenStatus(data?.beatovenMeta?.status || null);
         setStage('composing');
       } else if (data?.geminiRaw) {
         // fallback: keep raw for debugging but don't show by default
-        setConvertedMusic(null);
+        // No need to update board since convertedMusic is already null
       } else if (data?.error) {
         setError(data.error);
       } else {
@@ -161,7 +238,7 @@ export default function Whiteboard() {
   }, []);
 
 
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
+  // Drawing state - derived from active board
   const [current, setCurrent] = useState<Stroke | null>(null);
   const [color, setColor] = useState("#2563eb");
   const [width, setWidth] = useState(6);
@@ -171,6 +248,9 @@ export default function Whiteboard() {
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
+
+  // Get strokes directly from active board
+  const strokes = activeBoard?.strokes || [];
   
   // Undo/Redo state management
   const [history, setHistory] = useState<Stroke[][]>([[]]);
@@ -252,8 +332,17 @@ export default function Whiteboard() {
     const scale = Math.min(cw / iw, ch / ih);
     const w = iw * scale;
     const h = ih * scale;
-    setBgTransform({ x: (cw - w) / 2, y: (ch - h) / 2, width: w, height: h, rotation: 0 });
-  }, [bgImageObj, size]);
+    const newTransform = { x: (cw - w) / 2, y: (ch - h) / 2, width: w, height: h, rotation: 0 };
+    
+    // Update the active board directly
+    setBoards(prevBoards => 
+      prevBoards.map(board => 
+        board.id === activeBoardId 
+          ? { ...board, bgTransform: newTransform }
+          : board
+      )
+    );
+  }, [bgImageObj, size, activeBoardId]);
 
   // When bgSelected changes, attach the transformer to the selected node
   useEffect(() => {
@@ -326,12 +415,20 @@ export default function Whiteboard() {
   const onUp = useCallback(() => {
     if (!current) return;
     const newStrokes = [...strokes, current];
-    setStrokes(newStrokes);
+    
+    // Update the active board directly
+    setBoards(prevBoards => 
+      prevBoards.map(board => 
+        board.id === activeBoardId 
+          ? { ...board, strokes: newStrokes }
+          : board
+      )
+    );
     setCurrent(null);
     
     // Add to history for undo/redo
     addToHistory(newStrokes);
-  }, [current, strokes]);
+  }, [current, strokes, activeBoardId]);
 
   // Add stroke to history
   const addToHistory = useCallback((newStrokes: Stroke[]) => {
@@ -345,24 +442,49 @@ export default function Whiteboard() {
   const undo = useCallback(() => {
     if (historyIndex > 0) {
       const newIndex = historyIndex - 1;
+      const newStrokes = history[newIndex];
       setHistoryIndex(newIndex);
-      setStrokes(history[newIndex]);
+      
+      // Update the active board directly
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === activeBoardId 
+            ? { ...board, strokes: newStrokes }
+            : board
+        )
+      );
     }
-  }, [historyIndex, history]);
+  }, [historyIndex, history, activeBoardId]);
 
   // Redo function
   const redo = useCallback(() => {
     if (historyIndex < history.length - 1) {
       const newIndex = historyIndex + 1;
+      const newStrokes = history[newIndex];
       setHistoryIndex(newIndex);
-      setStrokes(history[newIndex]);
+      
+      // Update the active board directly
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === activeBoardId 
+            ? { ...board, strokes: newStrokes }
+            : board
+        )
+      );
     }
-  }, [historyIndex, history]);
+  }, [historyIndex, history, activeBoardId]);
 
   const clear = useCallback(() => {
-    setStrokes([]);
+    // Update the active board directly
+    setBoards(prevBoards => 
+      prevBoards.map(board => 
+        board.id === activeBoardId 
+          ? { ...board, strokes: [] }
+          : board
+      )
+    );
     addToHistory([]);
-  }, [addToHistory]);
+  }, [addToHistory, activeBoardId]);
 
   const exportPNG = useCallback(() => {
     if (!stageRef.current) return;
@@ -391,10 +513,17 @@ export default function Whiteboard() {
     const reader = new FileReader();
     reader.onload = () => {
       const data = String(reader.result || '');
-      setBackgroundImage(data);
+      // Update the active board directly
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === activeBoardId 
+            ? { ...board, backgroundImage: data }
+            : board
+        )
+      );
     };
     reader.readAsDataURL(file);
-  }, []);
+  }, [activeBoardId]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -425,12 +554,78 @@ export default function Whiteboard() {
   }, [convertedMusic]);
 
   const loadBoard = useCallback((entry: SavedBoard) => {
-    if (entry.fullImage) setBackgroundImage(entry.fullImage);
-    if (entry.trackUrl) setConvertedMusic(entry.trackUrl);
-  }, []);
+    if (entry.fullImage) {
+      // Update the active board directly
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === activeBoardId 
+            ? { ...board, backgroundImage: entry.fullImage || null }
+            : board
+        )
+      );
+    }
+    if (entry.trackUrl) {
+      // Update the active board directly
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === activeBoardId 
+            ? { ...board, convertedMusic: entry.trackUrl || null }
+            : board
+        )
+      );
+    }
+  }, [activeBoardId]);
 
   const deleteBoard = useCallback((id: string) => {
     setSavedBoards((s) => s.filter((x) => x.id !== id));
+  }, []);
+
+  // Board management functions
+  const createNewBoard = useCallback(() => {
+    if (boards.length >= maxBoards) return;
+    
+    const newBoardId = `board-${Date.now()}`;
+    const newBoard: Board = {
+      id: newBoardId,
+      name: `Board ${boards.length + 1}`,
+      strokes: [],
+      backgroundImage: null,
+      bgTransform: { x: 0, y: 0, width: 0, height: 0, rotation: 0 },
+      convertedMusic: null,
+      timestamp: new Date().toISOString(),
+    };
+    
+    setBoards(prevBoards => [...prevBoards, newBoard]);
+    setActiveBoardId(newBoardId);
+  }, [boards.length, maxBoards]);
+
+  const switchToBoard = useCallback((boardId: string) => {
+    setActiveBoardId(boardId);
+    setBgSelected(false); // Clear any selected background when switching
+  }, []);
+
+  const deleteBoardTab = useCallback((boardId: string) => {
+    if (boards.length <= 1) return; // Don't delete the last board
+    
+    setBoards(prevBoards => prevBoards.filter(board => board.id !== boardId));
+    
+    // If we deleted the active board, switch to the first remaining board
+    if (activeBoardId === boardId) {
+      const remainingBoards = boards.filter(board => board.id !== boardId);
+      if (remainingBoards.length > 0) {
+        setActiveBoardId(remainingBoards[0].id);
+      }
+    }
+  }, [boards, activeBoardId]);
+
+  const renameBoard = useCallback((boardId: string, newName: string) => {
+    setBoards(prevBoards => 
+      prevBoards.map(board => 
+        board.id === boardId 
+          ? { ...board, name: newName }
+          : board
+      )
+    );
   }, []);
 
   // Memoize stroke rendering for better performance
@@ -444,7 +639,7 @@ export default function Whiteboard() {
         // small offset range based on width
         const offsetRange = Math.max(1, s.width * 0.6);
         return Array.from({ length: copies }).map((_, ci) => {
-          const jittered = s.points.map((val, idx) => {
+          const jittered = s.points.map((val: number, idx: number) => {
             // apply jitter to x (even indices) and y (odd indices)
             if (idx % 2 === 0) return val + (Math.random() * 2 - 1) * offsetRange;
             return val + (Math.random() * 2 - 1) * offsetRange;
@@ -644,8 +839,59 @@ export default function Whiteboard() {
         .animate-loading-bar { animation: loading-bar 2.2s linear infinite; }
         .animate-loading-bar-slow { animation: loading-bar 4s linear infinite; }
       `}</style>
+      
+      {/* Board Tabs */}
+      <div className="bg-white border border-gray-200 rounded-t-2xl shadow-sm">
+        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            {boards.map((board) => (
+              <div
+                key={board.id}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 ${
+                  activeBoardId === board.id
+                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
+                }`}
+                onClick={() => switchToBoard(board.id)}
+              >
+                <span className="text-sm font-medium">{board.name}</span>
+                {boards.length > 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteBoardTab(board.id);
+                    }}
+                    className="ml-1 p-1 rounded-full hover:bg-gray-200 transition-colors"
+                    title="Close board"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+            {boards.length < maxBoards && (
+              <button
+                onClick={createNewBoard}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all duration-200 border border-dashed border-gray-300"
+                title="Add new board"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                <span className="text-sm font-medium">New Board</span>
+              </button>
+            )}
+          </div>
+          <div className="text-xs text-gray-500">
+            {boards.length} / {maxBoards} boards
+          </div>
+        </div>
+      </div>
+      
       {/* Toolbar */}
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-8 shadow-sm">
+      <div className="bg-white border-l border-r border-b border-gray-200 rounded-b-2xl p-6 mb-8 shadow-sm">
         <div className="flex flex-wrap items-center gap-6">
           <div className="flex items-center gap-4">
             <div className="flex flex-col">
@@ -837,7 +1083,18 @@ export default function Whiteboard() {
 
             {backgroundImage && (
               <button
-                onClick={() => { setBackgroundImage(null); setBgImageObj(null); setBgSelected(false); }}
+                onClick={() => { 
+                  // Update the active board directly
+                  setBoards(prevBoards => 
+                    prevBoards.map(board => 
+                      board.id === activeBoardId 
+                        ? { ...board, backgroundImage: null }
+                        : board
+                    )
+                  );
+                  setBgImageObj(null); 
+                  setBgSelected(false); 
+                }}
                 className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
                 title="Remove background image"
               >
@@ -856,7 +1113,7 @@ export default function Whiteboard() {
       </div>
 
       {/* Canvas container with enhanced styling */}
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className="bg-white border-l border-r border-b border-gray-200 rounded-b-2xl shadow-sm overflow-hidden">
   <div ref={containerRef} className="w-full" onDrop={onDrop} onDragOver={onDragOver}>
           <Stage
             key="whiteboard-stage"
@@ -902,7 +1159,15 @@ export default function Whiteboard() {
                     }}
                     onDragEnd={(e) => {
                       const node = e.target;
-                      setBgTransform((prev) => ({ ...prev, x: node.x(), y: node.y() }));
+                      const newTransform = { ...bgTransform, x: node.x(), y: node.y() };
+                      // Update the active board directly
+                      setBoards(prevBoards => 
+                        prevBoards.map(board => 
+                          board.id === activeBoardId 
+                            ? { ...board, bgTransform: newTransform }
+                            : board
+                        )
+                      );
                     }}
                     onTransformEnd={() => {
                       const node = bgImageRef.current;
@@ -911,13 +1176,21 @@ export default function Whiteboard() {
                       const scaleY = node.scaleY() || 1;
                       node.scaleX(1);
                       node.scaleY(1);
-                      setBgTransform({
+                      const newTransform = {
                         x: node.x(),
                         y: node.y(),
                         width: Math.max(8, node.width() * scaleX),
                         height: Math.max(8, node.height() * scaleY),
                         rotation: node.rotation() || 0,
-                      });
+                      };
+                      // Update the active board directly
+                      setBoards(prevBoards => 
+                        prevBoards.map(board => 
+                          board.id === activeBoardId 
+                            ? { ...board, bgTransform: newTransform }
+                            : board
+                        )
+                      );
                     }}
                   />
                   {bgSelected && (
