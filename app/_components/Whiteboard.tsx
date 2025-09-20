@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { Stage, Layer, Line, Rect, Image as KonvaImage, Transformer } from "react-konva";
+import { Stage, Layer, Line, Rect, Circle, Image as KonvaImage, Transformer } from "react-konva";
 import AudioPlayer from 'react-h5-audio-player';
 import 'react-h5-audio-player/lib/styles.css';
 
 type Point = number;
 type BrushType = 'normal' | 'rough' | 'thin' | 'highlighter' | 'spray' | 'marker';
+type ShapeType = 'rectangle' | 'circle' | 'line' | 'triangle';
 type Stroke = { 
   points: Point[]; 
   color: string; 
@@ -15,13 +16,25 @@ type Stroke = {
   opacity?: number;
   globalCompositeOperation?: "source-over" | "destination-out" 
 };
+type Shape = {
+  type: ShapeType;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  color: string;
+  width: number;
+  opacity?: number;
+  globalCompositeOperation?: "source-over" | "destination-out";
+};
 
 export default function Whiteboard() {
   // Board system - multiple tabs for different drawings
   type Board = {
     id: string;
     name: string;
-    strokes: any[];
+    strokes: Stroke[];
+    shapes: Shape[];
     backgroundImage: string | null;
     bgTransform: { x: number; y: number; width: number; height: number; rotation: number };
     convertedMusic: string | null;
@@ -41,6 +54,7 @@ export default function Whiteboard() {
       id: 'board-1',
       name: 'Board 1',
       strokes: [],
+      shapes: [],
       backgroundImage: null,
       bgTransform: { x: 0, y: 0, width: 0, height: 0, rotation: 0 },
       convertedMusic: null,
@@ -305,16 +319,25 @@ export default function Whiteboard() {
   const [width, setWidth] = useState(6);
   const [brushType, setBrushType] = useState<BrushType>('normal');
   const [erasing, setErasing] = useState(false);
+  const [isMouseDown, setIsMouseDown] = useState(false);
+  
+  // Shape tool state
+  const [toolMode, setToolMode] = useState<'draw' | 'shape'>('draw');
+  const [selectedShape, setSelectedShape] = useState<ShapeType>('rectangle');
+  const [currentShape, setCurrentShape] = useState<Shape | null>(null);
+  const [isDrawingShape, setIsDrawingShape] = useState(false);
+  
   const stageRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 500 });
 
-  // Get strokes directly from active board
+  // Get strokes and shapes directly from active board
   const strokes = activeBoard?.strokes || [];
+  const shapes = activeBoard?.shapes || [];
   
   // Undo/Redo state management
-  const [history, setHistory] = useState<Stroke[][]>([[]]);
+  const [history, setHistory] = useState<{strokes: Stroke[], shapes: Shape[]}[]>([{strokes: [], shapes: []}]);
   const [historyIndex, setHistoryIndex] = useState(0);
 
   // Brush properties helper functions
@@ -436,6 +459,7 @@ export default function Whiteboard() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [historyIndex, history]);
 
+
   // Cleanup Konva Stage on unmount
   useEffect(() => {
     return () => {
@@ -447,70 +471,169 @@ export default function Whiteboard() {
 
   const onDown = useCallback((e: any) => {
     const pos = e.target.getStage().getPointerPosition();
-    // If erasing, force normal brush and white color so erasing is just painting white
-    const effectiveBrushType: BrushType = erasing ? 'normal' : brushType;
-    const effectiveColor = erasing ? '#ffffff' : color;
-    const brushProps = getBrushProperties(effectiveBrushType, width);
-    const s: Stroke = {
-      points: [pos.x, pos.y],
-      color: effectiveColor,
-      width: brushProps.width,
-      brushType: effectiveBrushType,
-      opacity: brushProps.opacity,
-      // keep default compositing (draw white over canvas) when erasing
-      globalCompositeOperation: 'source-over',
-    };
-    setCurrent(s);
-  }, [brushType, width, color, erasing]);
+    
+    if (toolMode === 'shape') {
+      // Start drawing a shape
+      const effectiveColor = erasing ? '#ffffff' : color;
+      const newShape: Shape = {
+        type: selectedShape,
+        startX: pos.x,
+        startY: pos.y,
+        endX: pos.x,
+        endY: pos.y,
+        color: effectiveColor,
+        width: width,
+        opacity: 1,
+        globalCompositeOperation: 'source-over',
+      };
+      setCurrentShape(newShape);
+      setIsDrawingShape(true);
+      setIsMouseDown(true);
+    } else {
+      // Regular drawing mode
+      const effectiveBrushType: BrushType = erasing ? 'normal' : brushType;
+      const effectiveColor = erasing ? '#ffffff' : color;
+      const brushProps = getBrushProperties(effectiveBrushType, width);
+      const s: Stroke = {
+        points: [pos.x, pos.y],
+        color: effectiveColor,
+        width: brushProps.width,
+        brushType: effectiveBrushType,
+        opacity: brushProps.opacity,
+        globalCompositeOperation: 'source-over',
+      };
+      setCurrent(s);
+      setIsMouseDown(true);
+    }
+  }, [toolMode, selectedShape, brushType, width, color, erasing]);
 
   const onMove = useCallback((e: any) => {
-    if (!current) return;
+    if (!isMouseDown) return;
     const stage = e.target.getStage();
     const point = stage.getPointerPosition();
-    setCurrent({
-      ...current,
-      points: current.points.concat([point.x, point.y]),
-    });
-  }, [current]);
+    
+    if (toolMode === 'shape' && isDrawingShape && currentShape) {
+      // Update shape dimensions
+      setCurrentShape({
+        ...currentShape,
+        endX: point.x,
+        endY: point.y,
+      });
+    } else if (toolMode === 'draw' && current) {
+      // Regular drawing mode
+      const isWithinBounds = point.x >= 0 && point.x <= size.w && point.y >= 0 && point.y <= size.h;
+      
+      if (isWithinBounds) {
+        setCurrent({
+          ...current,
+          points: current.points.concat([point.x, point.y]),
+        });
+      }
+    }
+  }, [isMouseDown, toolMode, isDrawingShape, currentShape, current, size.w, size.h]);
 
   const onUp = useCallback(() => {
-    if (!current) return;
-    const newStrokes = [...strokes, current];
-    
-    // Update the active board directly
-    setBoards(prevBoards => 
-      prevBoards.map(board => 
-        board.id === activeBoardId 
-          ? { ...board, strokes: newStrokes }
-          : board
-      )
-    );
-    setCurrent(null);
-    
-    // Add to history for undo/redo
-    addToHistory(newStrokes);
-  }, [current, strokes, activeBoardId]);
-
-  // Add stroke to history
-  const addToHistory = useCallback((newStrokes: Stroke[]) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(newStrokes);
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  }, [history, historyIndex]);
-
-  // Undo function
-  const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      const newStrokes = history[newIndex];
-      setHistoryIndex(newIndex);
+    if (toolMode === 'shape' && isDrawingShape && currentShape) {
+      // Finish drawing a shape
+      const newShapes = [...shapes, currentShape];
+      
+      // Update the active board directly
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === activeBoardId 
+            ? { ...board, shapes: newShapes }
+            : board
+        )
+      );
+      setCurrentShape(null);
+      setIsDrawingShape(false);
+      setIsMouseDown(false);
+      
+      // Add to history for undo/redo
+      addToHistory({strokes, shapes: newShapes});
+    } else if (toolMode === 'draw' && current) {
+      // Regular drawing mode
+      const newStrokes = [...strokes, current];
       
       // Update the active board directly
       setBoards(prevBoards => 
         prevBoards.map(board => 
           board.id === activeBoardId 
             ? { ...board, strokes: newStrokes }
+            : board
+        )
+      );
+      setCurrent(null);
+      setIsMouseDown(false);
+      
+      // Add to history for undo/redo
+      addToHistory({strokes: newStrokes, shapes});
+    }
+  }, [toolMode, isDrawingShape, currentShape, current, strokes, shapes, activeBoardId]);
+
+  // Add to history
+  const addToHistory = useCallback((newState: {strokes: Stroke[], shapes: Shape[]}) => {
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newState);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+  }, [history, historyIndex]);
+
+  // Global mouse up listener to handle mouse release outside whiteboard
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (toolMode === 'shape' && isDrawingShape && currentShape) {
+        const newShapes = [...shapes, currentShape];
+        
+        // Update the active board directly
+        setBoards(prevBoards => 
+          prevBoards.map(board => 
+            board.id === activeBoardId 
+              ? { ...board, shapes: newShapes }
+              : board
+          )
+        );
+        setCurrentShape(null);
+        setIsDrawingShape(false);
+        setIsMouseDown(false);
+        
+        // Add to history for undo/redo
+        addToHistory({strokes, shapes: newShapes});
+      } else if (toolMode === 'draw' && current && isMouseDown) {
+        const newStrokes = [...strokes, current];
+        
+        // Update the active board directly
+        setBoards(prevBoards => 
+          prevBoards.map(board => 
+            board.id === activeBoardId 
+              ? { ...board, strokes: newStrokes }
+              : board
+          )
+        );
+        setCurrent(null);
+        setIsMouseDown(false);
+        
+        // Add to history for undo/redo
+        addToHistory({strokes: newStrokes, shapes});
+      }
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [toolMode, isDrawingShape, currentShape, current, isMouseDown, strokes, shapes, activeBoardId, addToHistory]);
+
+  // Undo function
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1;
+      const newState = history[newIndex];
+      setHistoryIndex(newIndex);
+      
+      // Update the active board directly
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === activeBoardId 
+            ? { ...board, strokes: newState.strokes, shapes: newState.shapes }
             : board
         )
       );
@@ -521,14 +644,14 @@ export default function Whiteboard() {
   const redo = useCallback(() => {
     if (historyIndex < history.length - 1) {
       const newIndex = historyIndex + 1;
-      const newStrokes = history[newIndex];
+      const newState = history[newIndex];
       setHistoryIndex(newIndex);
       
       // Update the active board directly
       setBoards(prevBoards => 
         prevBoards.map(board => 
           board.id === activeBoardId 
-            ? { ...board, strokes: newStrokes }
+            ? { ...board, strokes: newState.strokes, shapes: newState.shapes }
             : board
         )
       );
@@ -540,11 +663,11 @@ export default function Whiteboard() {
     setBoards(prevBoards => 
       prevBoards.map(board => 
         board.id === activeBoardId 
-          ? { ...board, strokes: [] }
+          ? { ...board, strokes: [], shapes: [] }
           : board
       )
     );
-    addToHistory([]);
+    addToHistory({strokes: [], shapes: []});
   }, [addToHistory, activeBoardId]);
 
   const exportPNG = useCallback(() => {
@@ -657,6 +780,7 @@ export default function Whiteboard() {
       id: newBoardId,
       name: `Board ${nextNumber}`,
       strokes: [],
+      shapes: [],
       backgroundImage: null,
       bgTransform: { x: 0, y: 0, width: 0, height: 0, rotation: 0 },
       convertedMusic: null,
@@ -779,6 +903,76 @@ export default function Whiteboard() {
     })();
     return () => { cancelled = true; };
   }, [boards, size.w, size.h, generateThumbnailForBoard]);
+
+  // Helper function to render a shape
+  const renderShape = useCallback((shape: Shape, key: string) => {
+    const { type, startX, startY, endX, endY, color, width, opacity, globalCompositeOperation } = shape;
+    
+    switch (type) {
+      case 'rectangle':
+        return (
+          <Rect
+            key={key}
+            x={Math.min(startX, endX)}
+            y={Math.min(startY, endY)}
+            width={Math.abs(endX - startX)}
+            height={Math.abs(endY - startY)}
+            stroke={color}
+            strokeWidth={width}
+            opacity={opacity || 1}
+            globalCompositeOperation={globalCompositeOperation}
+          />
+        );
+      case 'circle':
+        // Calculate center and radius for corner-to-corner circle (like rectangle)
+        const centerX = (startX + endX) / 2;
+        const centerY = (startY + endY) / 2;
+        const radius = Math.min(Math.abs(endX - startX), Math.abs(endY - startY)) / 2;
+        return (
+          <Circle
+            key={key}
+            x={centerX}
+            y={centerY}
+            radius={radius}
+            stroke={color}
+            strokeWidth={width}
+            opacity={opacity || 1}
+            globalCompositeOperation={globalCompositeOperation}
+          />
+        );
+      case 'line':
+        return (
+          <Line
+            key={key}
+            points={[startX, startY, endX, endY]}
+            stroke={color}
+            strokeWidth={width}
+            opacity={opacity || 1}
+            globalCompositeOperation={globalCompositeOperation}
+          />
+        );
+      case 'triangle':
+        const midX = (startX + endX) / 2;
+        return (
+          <Line
+            key={key}
+            points={[startX, endY, midX, startY, endX, endY, startX, endY]}
+            stroke={color}
+            strokeWidth={width}
+            opacity={opacity || 1}
+            globalCompositeOperation={globalCompositeOperation}
+            closed={true}
+          />
+        );
+      default:
+        return null;
+    }
+  }, []);
+
+  // Memoize shape rendering for better performance
+  const renderedShapes = useMemo(() => {
+    return shapes.map((shape, i) => renderShape(shape, `shape-${i}`));
+  }, [shapes, renderShape]);
 
   // Memoize stroke rendering for better performance
   const renderedStrokes = useMemo(() => {
@@ -979,6 +1173,12 @@ export default function Whiteboard() {
       />
     );
   }, [current]);
+
+  // Memoize current shape preview rendering
+  const renderedCurrentShape = useMemo(() => {
+    if (!currentShape || !isDrawingShape) return null;
+    return renderShape(currentShape, 'current-shape');
+  }, [currentShape, isDrawingShape, renderShape]);
 
   return (
     <div className="w-full max-w-7xl mx-auto">
@@ -1191,6 +1391,20 @@ export default function Whiteboard() {
           
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
+              <span className="text-gray-600">Tool</span>
+              <select
+                value={toolMode}
+                onChange={(e) => setToolMode(e.target.value as 'draw' | 'shape')}
+                className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm hover:border-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200"
+              >
+                <option value="draw">Draw</option>
+                <option value="shape">Shapes</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
               <span className="text-gray-600">Width</span>
               <input
                 type="range"
@@ -1204,23 +1418,43 @@ export default function Whiteboard() {
             </label>
           </div>
 
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
-              <span className="text-gray-600">Brush</span>
-              <select
-                value={brushType}
-                onChange={(e) => setBrushType(e.target.value as BrushType)}
-                className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm hover:border-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200"
-              >
-                <option value="normal">Normal</option>
-                <option value="rough">Rough</option>
-                <option value="spray">Spray</option>
-                <option value="marker">Marker</option>
-                <option value="thin">Thin</option>
-                <option value="highlighter">Highlighter</option>
-              </select>
-            </label>
-          </div>
+          {toolMode === 'draw' && (
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
+                <span className="text-gray-600">Brush</span>
+                <select
+                  value={brushType}
+                  onChange={(e) => setBrushType(e.target.value as BrushType)}
+                  className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm hover:border-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="rough">Rough</option>
+                  <option value="spray">Spray</option>
+                  <option value="marker">Marker</option>
+                  <option value="thin">Thin</option>
+                  <option value="highlighter">Highlighter</option>
+                </select>
+              </label>
+            </div>
+          )}
+
+          {toolMode === 'shape' && (
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
+                <span className="text-gray-600">Shape</span>
+                <select
+                  value={selectedShape}
+                  onChange={(e) => setSelectedShape(e.target.value as ShapeType)}
+                  className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm hover:border-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200"
+                >
+                  <option value="rectangle">Rectangle</option>
+                  <option value="circle">Circle</option>
+                  <option value="line">Line</option>
+                  <option value="triangle">Triangle</option>
+                </select>
+              </label>
+            </div>
+          )}
 
           <div className="flex items-center gap-3">
             {/* Undo/Redo buttons */}
@@ -1335,6 +1569,12 @@ export default function Whiteboard() {
             onMouseDown={(e) => {
               const clickedOnEmpty = e.target === e.target.getStage();
               if (clickedOnEmpty) setBgSelected(false);
+              
+              // Only prevent shape drawing when clicking on background image in shape mode
+              if (toolMode === 'shape' && !clickedOnEmpty && bgImageObj) {
+                return; // Don't start shape drawing when clicking on background image
+              }
+              
               onDown(e);
             }}
             onTouchStart={onDown}
@@ -1342,6 +1582,17 @@ export default function Whiteboard() {
             onTouchMove={onMove}
             onMouseUp={onUp}
             onTouchEnd={onUp}
+            onMouseLeave={() => {
+              // Don't end the stroke on mouse leave - just stop adding points
+              // The stroke will continue when mouse re-enters if still held down
+            }}
+            onMouseEnter={() => {
+              // Reset mouse state when entering the whiteboard without mouse down
+              // This prevents stroke continuation when re-entering without mouse down
+              if (!isMouseDown) {
+                setCurrent(null);
+              }
+            }}
             style={{ 
               background: "#ffffff", 
               cursor: erasing ? "crosshair" : "url(''), crosshair",
@@ -1417,7 +1668,9 @@ export default function Whiteboard() {
               {/* White background to ensure opaque export when no bg image */}
               {!bgImageObj && <Rect x={0} y={0} width={size.w} height={size.h} fill="#ffffff" />}
               {renderedStrokes}
+              {renderedShapes}
               {renderedCurrentStroke}
+              {renderedCurrentShape}
             </Layer>
           </Stage>
         </div>
