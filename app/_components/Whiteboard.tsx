@@ -31,6 +31,8 @@ export default function Whiteboard() {
   const [boards, setBoards] = useState<Board[]>([]);
   const [activeBoardId, setActiveBoardId] = useState<string>('');
   const [maxBoards] = useState(4);
+  const [editingBoardId, setEditingBoardId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState<string>('');
 
   // Initialize with default board
   useEffect(() => {
@@ -584,10 +586,17 @@ export default function Whiteboard() {
   const createNewBoard = useCallback(() => {
     if (boards.length >= maxBoards) return;
     
+    // Find the highest existing board number and increment from there
+    const existingNumbers = boards.map(board => {
+      const match = board.name.match(/Board (\d+)/);
+      return match ? parseInt(match[1], 10) : 0;
+    });
+    const nextNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+    
     const newBoardId = `board-${Date.now()}`;
     const newBoard: Board = {
       id: newBoardId,
-      name: `Board ${boards.length + 1}`,
+      name: `Board ${nextNumber}`,
       strokes: [],
       backgroundImage: null,
       bgTransform: { x: 0, y: 0, width: 0, height: 0, rotation: 0 },
@@ -597,7 +606,7 @@ export default function Whiteboard() {
     
     setBoards(prevBoards => [...prevBoards, newBoard]);
     setActiveBoardId(newBoardId);
-  }, [boards.length, maxBoards]);
+  }, [boards.length, maxBoards, boards]);
 
   const switchToBoard = useCallback((boardId: string) => {
     setActiveBoardId(boardId);
@@ -618,14 +627,78 @@ export default function Whiteboard() {
     }
   }, [boards, activeBoardId]);
 
-  const renameBoard = useCallback((boardId: string, newName: string) => {
-    setBoards(prevBoards => 
-      prevBoards.map(board => 
-        board.id === boardId 
-          ? { ...board, name: newName }
-          : board
-      )
-    );
+  const startRenamingBoard = useCallback((boardId: string, currentName: string) => {
+    setEditingBoardId(boardId);
+    setEditingName(currentName);
+  }, []);
+
+  const finishRenamingBoard = useCallback(() => {
+    if (editingBoardId && editingName.trim()) {
+      setBoards(prevBoards => 
+        prevBoards.map(board => 
+          board.id === editingBoardId 
+            ? { ...board, name: editingName.trim() }
+            : board
+        )
+      );
+    }
+    setEditingBoardId(null);
+    setEditingName('');
+  }, [editingBoardId, editingName]);
+
+  const cancelRenamingBoard = useCallback(() => {
+    setEditingBoardId(null);
+    setEditingName('');
+  }, []);
+
+  // Generate thumbnail for a board
+  const generateBoardThumbnail = useCallback((board: Board) => {
+    // Create a temporary canvas to render the board content
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 48;
+    const ctx = canvas.getContext('2d');
+    
+    if (!ctx) return null;
+    
+    // Fill white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 64, 48);
+    
+    // Draw background image if exists
+    if (board.backgroundImage) {
+      const img = new Image();
+      img.src = board.backgroundImage;
+      img.onload = () => {
+        const scale = Math.min(64 / img.width, 48 / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        const x = (64 - w) / 2;
+        const y = (48 - h) / 2;
+        ctx.drawImage(img, x, y, w, h);
+      };
+    }
+    
+    // Draw strokes scaled down for thumbnail
+    board.strokes.forEach(stroke => {
+      if (stroke.points.length < 4) return;
+      
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = Math.max(0.5, stroke.width * 0.1); // Scale down significantly
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalAlpha = stroke.opacity || 1;
+      
+      ctx.beginPath();
+      ctx.moveTo(stroke.points[0] * 0.08, stroke.points[1] * 0.08); // Scale down to fit thumbnail
+      
+      for (let i = 2; i < stroke.points.length; i += 2) {
+        ctx.lineTo(stroke.points[i] * 0.08, stroke.points[i + 1] * 0.08);
+      }
+      ctx.stroke();
+    });
+    
+    return canvas.toDataURL();
   }, []);
 
   // Memoize stroke rendering for better performance
@@ -842,26 +915,85 @@ export default function Whiteboard() {
       
       {/* Board Tabs */}
       <div className="bg-white border border-gray-200 rounded-t-2xl shadow-sm">
-        <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center px-6 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-3">
             {boards.map((board) => (
               <div
                 key={board.id}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg cursor-pointer transition-all duration-200 ${
+                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 min-w-[120px] ${
                   activeBoardId === board.id
                     ? 'bg-blue-50 text-blue-700 border border-blue-200'
                     : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
                 }`}
                 onClick={() => switchToBoard(board.id)}
               >
-                <span className="text-sm font-medium">{board.name}</span>
+                {/* Thumbnail Preview */}
+                <div className="w-16 h-12 bg-gray-100 rounded border border-gray-200 overflow-hidden flex items-center justify-center">
+                  {(() => {
+                    const thumbnail = generateBoardThumbnail(board);
+                    return thumbnail ? (
+                      <img 
+                        src={thumbnail} 
+                        alt={`${board.name} preview`}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="text-gray-400 text-xs">Empty</div>
+                    );
+                  })()}
+                </div>
+                
+                {/* Board Name */}
+                <div className="flex items-center justify-center gap-1">
+                  {editingBoardId === board.id ? (
+                    <input
+                      type="text"
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      onBlur={finishRenamingBoard}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') finishRenamingBoard();
+                        if (e.key === 'Escape') cancelRenamingBoard();
+                      }}
+                      className="text-xs font-medium bg-transparent border-none outline-none text-center min-w-[60px] max-w-[100px]"
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <>
+                      <span 
+                        className="text-xs font-medium text-center"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          startRenamingBoard(board.id, board.name);
+                        }}
+                      >
+                        {board.name}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startRenamingBoard(board.id, board.name);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-200 transition-all"
+                        title="Rename board"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
+                </div>
+                
+                {/* Close Button */}
                 {boards.length > 1 && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       deleteBoardTab(board.id);
                     }}
-                    className="ml-1 p-1 rounded-full hover:bg-gray-200 transition-colors"
+                    className="absolute -top-1 -right-1 p-1 rounded-full bg-white border border-gray-200 hover:bg-gray-50 transition-colors shadow-sm"
                     title="Close board"
                   >
                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -871,20 +1003,28 @@ export default function Whiteboard() {
                 )}
               </div>
             ))}
+            
+            {/* Add New Board Button */}
             {boards.length < maxBoards && (
               <button
                 onClick={createNewBoard}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all duration-200 border border-dashed border-gray-300"
+                className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all duration-200 border border-dashed border-gray-300 min-w-[120px]"
                 title="Add new board"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-                <span className="text-sm font-medium">New Board</span>
+                <div className="w-16 h-12 bg-gray-50 rounded border border-dashed border-gray-300 flex items-center justify-center">
+                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                </div>
+                <span className="text-xs font-medium">New Board</span>
               </button>
             )}
           </div>
-          <div className="text-xs text-gray-500">
+        </div>
+        
+        {/* Board Counter */}
+        <div className="flex justify-center pb-2">
+          <div className="text-xs text-gray-500 bg-gray-50 px-3 py-1 rounded-full">
             {boards.length} / {maxBoards} boards
           </div>
         </div>
