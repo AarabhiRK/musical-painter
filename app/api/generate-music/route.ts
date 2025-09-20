@@ -16,12 +16,18 @@ export async function POST(req: NextRequest) {
     const beatovenBase = process.env.BEATOVEN_BASE_URL || 'https://public-api.beatoven.ai';
     if (!geminiKey || !beatovenKey) return NextResponse.json({ error: 'API keys not set' }, { status: 500 });
 
-    // Filter valid boards (image OR ≥5 strokes)
-    const validBoards = boards.filter(b => (b.imageBase64?.length || 0) > 100 || (b.strokeCount || 0) >= 5).slice(0, 4);
-    if (!validBoards.length) return NextResponse.json({ error: 'No valid boards to analyze' }, { status: 400 });
+    // Filter valid boards: accept any board that either has an uploaded image or has >=5 stroke points
+    const validBoards = boards.filter(b => (b.imageBase64 && b.imageBase64.length > 100) || (b.strokeCount || 0) >= 5);
+    if (validBoards.length === 0) {
+      return NextResponse.json({ error: 'No valid boards to analyze. Each board must have either an uploaded background image or at least 5 stroke points.' }, { status: 400 });
+    }
 
-    const numBoards = validBoards.length;
-    const perBoardDuration = durationMap[numBoards] || Math.max(15, Math.floor(totalDuration / numBoards));
+  // Limit to at most 4 boards for duration splits as requested; if more, keep first 4
+  const limitedBoards = validBoards.slice(0, Math.min(validBoards.length, 4));
+
+    // Determine per-board duration
+    const num = limitedBoards.length;
+    const perBoardDuration = durationMap[num] || Math.max(15, Math.floor(totalDuration / num));
 
     // 1️⃣ Generate per-board musical briefs
     const perBoardResults: Array<any> = [];
