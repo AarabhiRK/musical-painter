@@ -15,26 +15,20 @@ export async function POST(req: NextRequest) {
   try {
     const { imageBase64 } = await req.json();
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: 'GEMINI_API_KEY not set' }, { status: 500 });
-    }
+    if (!apiKey) return NextResponse.json({ error: 'GEMINI_API_KEY not set' }, { status: 500 });
 
-    // Prompt template: ask Gemini Vision to analyze the image and return a JSON
-    // object that will be used to instruct the music-generation service.
-    const humanPrompt = `You are an assistant that converts a drawing into a music-generation prompt.\n\n` +
-      `Analyze the attached image and produce a single JSON object (no extra commentary) with the following keys:\n` +
-      `title: short title for the piece\n` +
-      `description: 2-3 sentence description of the scene/elements\n` +
-      `mood: one or two words (e.g., wistful, energetic, calm)\n` +
-      `genre: musical genre suggestion (e.g., ambient, cinematic, electronic, jazz, orchestral)\n` +
-      `tempo: suggested tempo in BPM (integer)\n` +
-      `instruments: array of 2-6 instrument names\n` +
-      `energy: number between 0.0 and 1.0 indicating intensity\n` +
-      `duration: suggested duration in seconds (e.g., 30, 60)\n` +
-      `trackPrompt: a 20-40 word concise prompt suitable for music-generation APIs describing the desired music (use mood, tempo, instruments)\n\n` +
-      `Output only the JSON object. Now analyze the image and output the JSON.`;
+    // Concise prompt: ask Gemini to summarize the image musically
+    const humanPrompt = `You are an assistant that converts a drawing into a short musical prompt. 
+Analyze the attached image and output a JSON object with:
+- mood (1-2 words), 
+- genre (short), 
+- tempo (BPM), 
+- duration (seconds), 
+- instruments (2-6), 
+- percussion (short description), 
+- trackPrompt (30-60 words concise natural-language prompt suitable for music-generation APIs). 
+Output only the JSON object.`;
 
-    // Call Gemini Vision / Generative Language API with inline image
     const geminiRes = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey,
       {
@@ -56,25 +50,18 @@ export async function POST(req: NextRequest) {
     const geminiData = await geminiRes.json();
     const geminiText = extractTextFromGemini(geminiData);
 
-    // Try to extract JSON from the model output
+    // Parse JSON from Gemini
     let parsedJSON: any = null;
     try {
       const jsonMatch = geminiText.match(/\{[\s\S]*\}/m);
-      if (jsonMatch) {
-        parsedJSON = JSON.parse(jsonMatch[0]);
-      } else {
-        // as a last resort try to parse the whole text
-        parsedJSON = JSON.parse(geminiText);
-      }
+      parsedJSON = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(geminiText);
     } catch (e) {
-      // return the model text so client can show it for debugging
-      return NextResponse.json({
-        geminiRaw: geminiText,
-        error: 'Failed to parse JSON from Gemini output',
-      });
+      return NextResponse.json({ geminiRaw: geminiText, error: 'Failed to parse JSON from Gemini output' });
     }
 
-    // If Beatoven integration is configured, use the Compose API and poll until composed
+    // Generate a short Beatoven prompt (use trackPrompt if available, otherwise fallback)
+    const trackPrompt = parsedJSON.trackPrompt?.trim() || `${parsedJSON.mood || ''} ${parsedJSON.genre || ''}`.trim() || 'ambient piece';
+
     const beatovenKey = process.env.BEATOVEN_API_KEY;
     const beatovenBase = process.env.BEATOVEN_BASE_URL || 'https://public-api.beatoven.ai';
     let beatovenResult: any = null;
@@ -82,18 +69,11 @@ export async function POST(req: NextRequest) {
     if (beatovenKey) {
       try {
         const composeUrl = `${beatovenBase.replace(/\/$/, '')}/api/v1/tracks/compose`;
-        const composePayload = {
-          prompt: { text: parsedJSON.trackPrompt || parsedJSON.description || `${parsedJSON.mood || ''} ${parsedJSON.genre || ''}`.trim() || 'ambient piece' },
-          format: 'mp3',
-          looping: false,
-        };
+        const composePayload = { prompt: { text: trackPrompt }, format: 'mp3', looping: false };
 
         const composeRes = await fetch(composeUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${beatovenKey}`,
-          },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${beatovenKey}` },
           body: JSON.stringify(composePayload),
         });
 
@@ -102,20 +82,14 @@ export async function POST(req: NextRequest) {
           beatovenResult = { error: `Beatoven compose error: ${composeRes.status}`, details: text };
         } else {
           const composeJson = await composeRes.json();
-          // expected: { status: 'started', task_id }
           const taskId = composeJson?.task_id;
           beatovenResult = composeJson;
 
           if (taskId) {
-            // Poll for status
             const statusUrlBase = `${beatovenBase.replace(/\/$/, '')}/api/v1/tasks`;
-            const maxAttempts = 45; // ~90s with 2s interval
-            const intervalMs = 2000;
             let attempts = 0;
             let finalMeta: any = null;
-
-            while (attempts < maxAttempts) {
-              attempts += 1;
+            while (attempts++ < 45) {
               try {
                 const stRes = await fetch(`${statusUrlBase}/${encodeURIComponent(taskId)}`, {
                   method: 'GET',
@@ -129,26 +103,13 @@ export async function POST(req: NextRequest) {
                     finalMeta = stJson?.meta || null;
                     break;
                   }
-                  if (status === 'failed' || status === 'error') {
-                    break;
-                  }
-                } else {
-                  // non-ok status; keep trying until timeout
+                  if (status === 'failed' || status === 'error') break;
                 }
-              } catch (e) {
-                // ignore transient errors
-              }
-              // wait
-              await new Promise((r) => setTimeout(r, intervalMs));
+              } catch {}
+              await new Promise(r => setTimeout(r, 2000));
             }
-
-            if (finalMeta) {
-              // attach meta to beatovenResult for downstream normalization
-              beatovenResult = { ...beatovenResult, meta: finalMeta };
-            } else {
-              // timeout
-              beatovenResult = { ...beatovenResult, error: 'Beatoven compose timed out or failed', task_id: taskId };
-            }
+            if (finalMeta) beatovenResult = { ...beatovenResult, meta: finalMeta };
+            else beatovenResult = { ...beatovenResult, error: 'Beatoven compose timed out or failed', task_id: taskId };
           }
         }
       } catch (e: any) {
@@ -156,29 +117,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Normalize possible audio outputs from Beatoven
+    // Extract audio URL/base64
     let beatovenAudioUrl: string | null = null;
     let beatovenAudioBase64: string | null = null;
     if (beatovenResult) {
-      if (typeof beatovenResult === 'string') {
-        beatovenAudioUrl = beatovenResult;
-      } else if (beatovenResult.audioUrl) {
-        beatovenAudioUrl = beatovenResult.audioUrl;
-      } else if (beatovenResult.track && beatovenResult.track.downloadUrl) {
-        beatovenAudioUrl = beatovenResult.track.downloadUrl;
-      } else if (beatovenResult.meta && beatovenResult.meta.track_url) {
-        beatovenAudioUrl = beatovenResult.meta.track_url;
-      } else if (beatovenResult.data && beatovenResult.data.audio && beatovenResult.data.audio.url) {
-        beatovenAudioUrl = beatovenResult.data.audio.url;
-      } else if (beatovenResult.audioBase64) {
-        beatovenAudioBase64 = beatovenResult.audioBase64;
-      } else if (beatovenResult.base64) {
-        beatovenAudioBase64 = beatovenResult.base64;
-      }
+      beatovenAudioUrl =
+        beatovenResult.audioUrl ||
+        beatovenResult.track?.downloadUrl ||
+        beatovenResult.meta?.track_url ||
+        beatovenResult.data?.audio?.url ||
+        null;
+      beatovenAudioBase64 = beatovenResult.audioBase64 || beatovenResult.base64 || null;
     }
 
     return NextResponse.json({
       prompt: parsedJSON,
+      trackPrompt,
       beatoven: beatovenResult,
       beatovenAudioUrl,
       beatovenAudioBase64,

@@ -10,24 +10,14 @@ function extractTextFromGemini(data: GeminiResponse) {
   );
 }
 
-function validatePrompt(obj: any) {
-  if (!obj || typeof obj !== 'object') return false;
-  const { mood, genre, tempo, duration } = obj;
-  if (typeof mood !== 'string') return false;
-  if (typeof genre !== 'string') return false;
-  if (typeof tempo !== 'number' || Number.isNaN(tempo)) return false;
-  if (typeof duration !== 'number' || Number.isNaN(duration)) return false;
-  return true;
-}
-
 export async function POST(req: NextRequest) {
   try {
     const { imageBase64 } = await req.json();
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return NextResponse.json({ error: 'GEMINI_API_KEY not set' }, { status: 500 });
 
-    // Strict JSON schema prompt
-    const humanPrompt = `You are a vision assistant. Analyze the attached drawing and OUTPUT ONLY a JSON object matching this exact schema (no explanation, no extra keys):\n{\n  "mood": string, // one word describing mood (e.g., calm, energetic)\n  "genre": string, // short music genre (e.g., ambient, cinematic, electronic, jazz, orchestral)\n  "tempo": number, // integer BPM, between 40 and 200\n  "duration": number // suggested duration in seconds, integer (e.g., 30, 60)\n}\nExample output:\n{ "mood": "wistful", "genre": "ambient", "tempo": 70, "duration": 30 }\nNow analyze the image and output only the JSON object.`;
+    // Prompt for Gemini
+    const humanPrompt = `Convert this drawing into a short musical interpretation, a way to represent your visual art into a musical piece (works for scenes, patterns, and realistic drawings alike).`;
 
     const geminiRes = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey,
@@ -48,36 +38,24 @@ export async function POST(req: NextRequest) {
     );
 
     const geminiData = await geminiRes.json();
-    const geminiText = extractTextFromGemini(geminiData);
+    const geminiText = extractTextFromGemini(geminiData).trim();
 
-    // Extract JSON blob
-    let parsed: any = null;
-    try {
-      const m = geminiText.match(/\{[\s\S]*\}/m);
-      if (!m) throw new Error('No JSON found');
-      parsed = JSON.parse(m[0]);
-    } catch (e) {
-      return NextResponse.json({ geminiRaw: geminiText, error: 'Failed to parse strict JSON from Gemini' });
+    if (!geminiText) {
+      return NextResponse.json({ error: 'Gemini returned empty text' }, { status: 500 });
     }
 
-    // Coerce numeric fields and validate
-    parsed.tempo = Number(parsed.tempo);
-    parsed.duration = Number(parsed.duration);
-    if (!validatePrompt(parsed)) {
-      return NextResponse.json({ geminiRaw: geminiText, parsed, error: 'Parsed JSON does not match required schema' });
-    }
-
-    // Prepare Beatoven compose
+    // Beatoven setup
     const beatovenKey = process.env.BEATOVEN_API_KEY;
     const beatovenBase = process.env.BEATOVEN_BASE_URL || 'https://public-api.beatoven.ai';
-    if (!beatovenKey) {
-      return NextResponse.json({ prompt: parsed, error: 'BEATOVEN_API_KEY not set' }, { status: 500 });
-    }
+    if (!beatovenKey) return NextResponse.json({ error: 'BEATOVEN_API_KEY not set' }, { status: 500 });
 
     const composeUrl = `${beatovenBase.replace(/\/$/, '')}/api/v1/tracks/compose`;
-    const trackPrompt = `${parsed.duration} seconds ${parsed.mood} ${parsed.genre} track`;
-    const composePayload = { prompt: { text: trackPrompt }, format: 'mp3', looping: false };
 
+    // Send Gemini output directly to Beatoven
+    const trackPrompt = geminiText;
+    console.log("Prompt sent to Beatoven:", trackPrompt);
+
+    const composePayload = { prompt: { text: trackPrompt }, format: 'mp3', looping: false };
     const composeRes = await fetch(composeUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${beatovenKey}` },
@@ -86,16 +64,16 @@ export async function POST(req: NextRequest) {
 
     if (!composeRes.ok) {
       const text = await composeRes.text();
-      return NextResponse.json({ prompt: parsed, error: `Beatoven compose error: ${composeRes.status}`, details: text }, { status: 500 });
+      return NextResponse.json({ geminiText, error: `Beatoven compose error: ${composeRes.status}`, details: text }, { status: 500 });
     }
 
     const composeJson = await composeRes.json();
     const taskId = composeJson?.task_id;
-    if (!taskId) return NextResponse.json({ prompt: parsed, error: 'No task_id returned from Beatoven', composeJson });
+    if (!taskId) return NextResponse.json({ geminiText, error: 'No task_id returned from Beatoven', composeJson });
 
-    // Poll status
+    // Poll Beatoven until composition is ready
     const statusUrlBase = `${beatovenBase.replace(/\/$/, '')}/api/v1/tasks`;
-    const maxAttempts = 60; // ~120s
+    const maxAttempts = 60;
     const intervalMs = 2000;
     let attempts = 0;
     let finalMeta: any = null;
@@ -116,23 +94,30 @@ export async function POST(req: NextRequest) {
             break;
           }
           if (stJson?.status === 'failed' || stJson?.status === 'error') {
-            return NextResponse.json({ prompt: parsed, beatoven: stJson, error: 'Beatoven composition failed' }, { status: 500 });
+            return NextResponse.json({ geminiText, beatoven: stJson, error: 'Beatoven composition failed' }, { status: 500 });
           }
         }
-      } catch (e) {
-        // ignore transient errors
-      }
+      } catch (e) {}
       await new Promise((r) => setTimeout(r, intervalMs));
     }
 
     if (!finalMeta) {
-      return NextResponse.json({ prompt: parsed, task_id: taskId, status: lastStatus || 'timed_out', error: 'Beatoven compose timed out' }, { status: 500 });
+      return NextResponse.json({ geminiText, task_id: taskId, status: lastStatus || 'timed_out', error: 'Beatoven compose timed out' }, { status: 500 });
     }
 
     const trackUrl = finalMeta.track_url || finalMeta.trackUrl || null;
-    if (!trackUrl) return NextResponse.json({ prompt: parsed, beatovenMeta: finalMeta, error: 'No track URL in Beatoven meta' }, { status: 500 });
+    if (!trackUrl) return NextResponse.json({ geminiText, beatovenMeta: finalMeta, error: 'No track URL in Beatoven meta' }, { status: 500 });
 
-    return NextResponse.json({ prompt: parsed, task_id: taskId, trackUrl, beatovenMeta: finalMeta });
+    // Return Gemini text, Beatoven prompt, and track
+    return NextResponse.json({
+      prompt: geminiText,
+      beatovenPrompt: trackPrompt, // natural language prompt sent to Beatoven
+      task_id: taskId,
+      trackUrl,
+      beatovenMeta: finalMeta
+    });
+
+
   } catch (error: any) {
     return NextResponse.json({ error: error?.message || String(error) }, { status: 500 });
   }
