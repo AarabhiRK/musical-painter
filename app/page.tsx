@@ -13,7 +13,7 @@ export default function Page() {
           </p>
           <p className="text-base text-gray-500 max-w-3xl mx-auto leading-relaxed">
             Sketch freely on the canvas below. Use the eraser to correct mistakes, adjust colors and brush size, 
-            then click "Export PNG" to download your creation. Your drawings will be analyzed to generate music in the next step.
+            then Export to download your creation. Your drawings will be analyzed to generate music in the next step.
           </p>
         </div>
         
