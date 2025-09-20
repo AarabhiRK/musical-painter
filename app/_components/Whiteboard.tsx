@@ -35,8 +35,14 @@ export default function Whiteboard() {
         body: JSON.stringify({ imageBase64: base64 })
       });
       const data = await res.json();
+      
+      // Check if the response contains an error
+      if (!res.ok || data.error) {
+        throw new Error(data.error?.message || data.error || `API request failed with status ${res.status}`);
+      }
+      
       // Gemini API returns candidates[0].content.parts[0].text
-      const summary = data?.candidates?.[0]?.content?.parts?.[0]?.text || data?.error || 'No summary returned.';
+      const summary = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No summary returned.';
       setEmotionSummary(summary);
     } catch (e: any) {
       setError(e.message || 'Failed to analyze.');

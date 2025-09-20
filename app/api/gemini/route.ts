@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Gemini Vision API endpoint for multimodal (image+text) analysis
-    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=' + apiKey, {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
