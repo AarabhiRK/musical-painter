@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import fs from 'fs/promises';
+import path from 'path';
 
 type GeminiResponse = any;
 
@@ -131,6 +133,38 @@ export async function POST(req: NextRequest) {
 
     const trackUrl = finalMeta.track_url || finalMeta.trackUrl || null;
     if (!trackUrl) return NextResponse.json({ prompt: parsed, beatovenMeta: finalMeta, error: 'No track URL in Beatoven meta' }, { status: 500 });
+
+    // Persist run metadata to data/runs.json for debugging/inspection
+    (async () => {
+      try {
+        const runsDir = path.join(process.cwd(), 'data');
+        const runsFile = path.join(runsDir, 'runs.json');
+        await fs.mkdir(runsDir, { recursive: true });
+        let runs: any[] = [];
+        try {
+          const existing = await fs.readFile(runsFile, 'utf-8');
+          runs = JSON.parse(existing || '[]');
+        } catch (e) {
+          runs = [];
+        }
+        const entry = {
+          id: `${Date.now()}-${Math.round(Math.random()*1000)}`,
+          timestamp: new Date().toISOString(),
+          prompt: parsed,
+          task_id: taskId,
+          trackUrl,
+          beatovenMeta: finalMeta,
+          geminiRaw: geminiText,
+        };
+        runs.unshift(entry);
+        // keep last 200 runs to bound file size
+        if (runs.length > 200) runs = runs.slice(0, 200);
+        await fs.writeFile(runsFile, JSON.stringify(runs, null, 2), 'utf-8');
+      } catch (e) {
+        // ignore write errors so we don't break the API
+        try { console.error('Failed to write run metadata', e); } catch {}
+      }
+    })();
 
     return NextResponse.json({ prompt: parsed, task_id: taskId, trackUrl, beatovenMeta: finalMeta });
   } catch (error: any) {
