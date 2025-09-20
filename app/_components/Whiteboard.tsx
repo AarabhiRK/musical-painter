@@ -835,8 +835,11 @@ export default function Whiteboard() {
         {/* Results area */}
         <div className="mt-6">
           {stage === 'done' && convertedMusic && (
-            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-900">
-              <strong>Converted Music:</strong>
+            <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                <strong className="text-lg">Generated Music</strong>
+              </div>
               <div className="mt-4">
                 {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
                   <div className="w-full">
