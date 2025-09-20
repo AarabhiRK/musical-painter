@@ -68,7 +68,7 @@ Start with 'Background music:' and keep it natural-language, ready for Beatoven.
 Ensure coherence: align tempo, crossfade 1-3s, maintain sonic motifs, avoid abrupt changes. Output ~${totalDuration}s background music track of ordered segments suitable for scenes/looping.
     `;
 
-    const combinedPrompt = `Compose a single ${totalDuration}-second track composed of ${numBoards} ordered segments. ${sharedHints}\n\n${combinedSegmentsText}`;
+    const combinedPrompt = `Compose a single ${totalDuration}-second track composed of ${boards.length} ordered segments. ${sharedHints}\n\n${combinedSegmentsText}`;
 
     // 3️⃣ Optional Gemini refiner for a polished prompt
     let refinedPrompt: string | null = null;
