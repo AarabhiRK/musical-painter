@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Stage, Layer, Line, Rect } from "react-konva";
+import AudioPlayer from 'react-h5-audio-player';
+import 'react-h5-audio-player/lib/styles.css';
 
 type Point = number;
 type BrushType = 'normal' | 'rough' | 'thin' | 'highlighter' | 'spray' | 'marker';
@@ -963,6 +965,7 @@ export default function Whiteboard() {
               </div>
               <div className="mt-4">
                 {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
+<<<<<<< HEAD
                   <div className="w-full">
                     <div className="flex items-center gap-3">
                       <button
@@ -978,6 +981,30 @@ export default function Whiteboard() {
                       </div>
                     </div>
                     <audio ref={audioRef} src={convertedMusic} className="hidden" />
+=======
+                  <div className="bg-white rounded-lg p-4 shadow-sm">
+                    <AudioPlayer
+                      src={convertedMusic}
+                      onPlay={() => console.log('Playing')}
+                      onPause={() => console.log('Paused')}
+                      onEnded={() => console.log('Ended')}
+                      onSeeked={() => console.log('Seeked')}
+                      style={{
+                        width: '100%',
+                        borderRadius: '8px',
+                      }}
+                      customAdditionalControls={[]}
+                      showJumpControls={true}
+                      showDownloadProgress={false}
+                      showFilledProgress={true}
+                      showFilledVolume={true}
+                      layout="horizontal"
+                      progressJumpSteps={{
+                        backward: 5000,
+                        forward: 5000,
+                      }}
+                    />
+>>>>>>> 35dc1a1 (Fix Turbopack error and update dependencies)
                   </div>
                 ) : (
                   <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
