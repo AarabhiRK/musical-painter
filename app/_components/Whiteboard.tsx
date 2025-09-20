@@ -4,13 +4,22 @@ import { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Line, Rect } from "react-konva";
 
 type Point = number;
-type Stroke = { points: Point[]; color: string; width: number; globalCompositeOperation?: "source-over" | "destination-out" };
+type BrushType = 'normal' | 'rough' | 'thin' | 'highlighter';
+type Stroke = { 
+  points: Point[]; 
+  color: string; 
+  width: number; 
+  brushType: BrushType;
+  opacity?: number;
+  globalCompositeOperation?: "source-over" | "destination-out" 
+};
 
 export default function Whiteboard() {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [current, setCurrent] = useState<Stroke | null>(null);
   const [color, setColor] = useState("#2563eb");
   const [width, setWidth] = useState(6);
+  const [brushType, setBrushType] = useState<BrushType>('normal');
   const [erasing, setErasing] = useState(false);
   const stageRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -19,6 +28,44 @@ export default function Whiteboard() {
   // Undo/Redo state management
   const [history, setHistory] = useState<Stroke[][]>([[]]);
   const [historyIndex, setHistoryIndex] = useState(0);
+
+  // Brush properties helper functions
+  const getBrushProperties = (type: BrushType, baseWidth: number) => {
+    switch (type) {
+      case 'rough':
+        return {
+          width: baseWidth * 1.2,
+          opacity: 0.8,
+          tension: 0.1,
+          lineCap: 'round' as const,
+          lineJoin: 'round' as const,
+        };
+      case 'thin':
+        return {
+          width: Math.max(1, baseWidth * 0.5),
+          opacity: 1,
+          tension: 0.5,
+          lineCap: 'round' as const,
+          lineJoin: 'round' as const,
+        };
+      case 'highlighter':
+        return {
+          width: baseWidth * 2,
+          opacity: 0.4,
+          tension: 0.3,
+          lineCap: 'square' as const,
+          lineJoin: 'round' as const,
+        };
+      default: // normal
+        return {
+          width: baseWidth,
+          opacity: 1,
+          tension: 0.3,
+          lineCap: 'round' as const,
+          lineJoin: 'round' as const,
+        };
+    }
+  };
 
   // Resize Stage to container
   useEffect(() => {
@@ -50,10 +97,13 @@ export default function Whiteboard() {
 
   const onDown = (e: any) => {
     const pos = e.target.getStage().getPointerPosition();
+    const brushProps = getBrushProperties(brushType, width);
     const s: Stroke = {
       points: [pos.x, pos.y],
       color,
-      width,
+      width: brushProps.width,
+      brushType,
+      opacity: brushProps.opacity,
       globalCompositeOperation: erasing ? "destination-out" : "source-over",
     };
     setCurrent(s);
@@ -151,6 +201,22 @@ export default function Whiteboard() {
             </label>
           </div>
 
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <span>Brush</span>
+              <select
+                value={brushType}
+                onChange={(e) => setBrushType(e.target.value as BrushType)}
+                className="px-3 py-1 rounded border border-gray-300 bg-white text-sm"
+              >
+                <option value="normal">Normal</option>
+                <option value="rough">Rough</option>
+                <option value="thin">Thin</option>
+                <option value="highlighter">Highlighter</option>
+              </select>
+            </label>
+          </div>
+
           <div className="flex items-center gap-2">
             {/* Undo/Redo buttons */}
             <div className="flex items-center gap-1 border-r border-gray-300 pr-3 mr-2">
@@ -231,29 +297,37 @@ export default function Whiteboard() {
             <Layer>
               {/* White background to ensure opaque export */}
               <Rect x={0} y={0} width={size.w} height={size.h} fill="#ffffff" />
-              {strokes.map((s, i) => (
-                <Line
-                  key={i}
-                  points={s.points}
-                  stroke={s.color}
-                  strokeWidth={s.width}
-                  tension={0.3}
-                  lineCap="round"
-                  lineJoin="round"
-                  globalCompositeOperation={s.globalCompositeOperation}
-                />
-              ))}
-              {current && (
-                <Line
-                  points={current.points}
-                  stroke={current.color}
-                  strokeWidth={current.width}
-                  tension={0.3}
-                  lineCap="round"
-                  lineJoin="round"
-                  globalCompositeOperation={current.globalCompositeOperation}
-                />
-              )}
+              {strokes.map((s, i) => {
+                const brushProps = getBrushProperties(s.brushType, s.width);
+                return (
+                  <Line
+                    key={i}
+                    points={s.points}
+                    stroke={s.color}
+                    strokeWidth={brushProps.width}
+                    opacity={brushProps.opacity}
+                    tension={brushProps.tension}
+                    lineCap={brushProps.lineCap}
+                    lineJoin={brushProps.lineJoin}
+                    globalCompositeOperation={s.globalCompositeOperation}
+                  />
+                );
+              })}
+              {current && (() => {
+                const brushProps = getBrushProperties(current.brushType, current.width);
+                return (
+                  <Line
+                    points={current.points}
+                    stroke={current.color}
+                    strokeWidth={brushProps.width}
+                    opacity={brushProps.opacity}
+                    tension={brushProps.tension}
+                    lineCap={brushProps.lineCap}
+                    lineJoin={brushProps.lineJoin}
+                    globalCompositeOperation={current.globalCompositeOperation}
+                  />
+                );
+              })()}
             </Layer>
           </Stage>
         </div>
