@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Stage, Layer, Line, Rect } from "react-konva";
+import AudioPlayer from 'react-h5-audio-player';
+import 'react-h5-audio-player/lib/styles.css';
 
 type Point = number;
 type BrushType = 'normal' | 'rough' | 'thin' | 'highlighter' | 'spray' | 'marker';
@@ -25,12 +27,6 @@ export default function Whiteboard() {
   // promptPreview is intentionally not surfaced in UI; server logs to data/runs.json
   const abortCtrlRef = useRef<AbortController | null>(null);
 
-  // Audio player state
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   // Brush palettes
   const palettes: Record<string, string[]> = {
     Default: ["#2563eb", "#ef4444", "#10b981", "#f59e0b", "#7c3aed", "#111827"],
@@ -129,54 +125,6 @@ export default function Whiteboard() {
     }
   }, []);
 
-  // Audio control functions
-  const togglePlayPause = useCallback(() => {
-    if (!audioRef.current) return;
-    
-    if (isPlaying) {
-      audioRef.current.pause();
-      setIsPlaying(false);
-    } else {
-      audioRef.current.play();
-      setIsPlaying(true);
-    }
-  }, [isPlaying]);
-
-  const handleTimeUpdate = useCallback(() => {
-    if (!audioRef.current || isDragging) return;
-    setCurrentTime(audioRef.current.currentTime);
-  }, [isDragging]);
-
-  const handleLoadedMetadata = useCallback(() => {
-    if (!audioRef.current) return;
-    setDuration(audioRef.current.duration);
-  }, []);
-
-  const handleSeek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !duration) return;
-    
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const percentage = clickX / rect.width;
-    const newTime = percentage * duration;
-    
-    audioRef.current.currentTime = newTime;
-    setCurrentTime(newTime);
-  }, [duration]);
-
-  const handleMouseDown = useCallback(() => {
-    setIsDragging(true);
-  }, []);
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  const formatTime = useCallback((time: number) => {
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  }, []);
 
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [current, setCurrent] = useState<Stroke | null>(null);
@@ -815,75 +763,6 @@ export default function Whiteboard() {
           piece (works for scenes, patterns, and realistic drawings alike).
         </p>
         <p className="mt-2 max-w-xl text-xs text-gray-500 italic text-center"></p>
-        {convertedMusic && (
-          <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-              <strong className="text-lg">Generated Music</strong>
-            </div>
-            <div className="mt-4">
-              {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
-                <div className="bg-white rounded-lg p-4 shadow-sm">
-                  {/* Hidden audio element for actual playback */}
-                  <audio
-                    ref={audioRef}
-                    src={convertedMusic}
-                    onTimeUpdate={handleTimeUpdate}
-                    onLoadedMetadata={handleLoadedMetadata}
-                    onEnded={() => setIsPlaying(false)}
-                    className="hidden"
-                  />
-                  
-                  {/* Custom Audio Player */}
-                  <div className="space-y-4">
-                    {/* Play/Pause Button */}
-                    <div className="flex justify-center">
-                      <button
-                        onClick={togglePlayPause}
-                        className="w-16 h-16 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center text-white shadow-lg transition-all duration-200 hover:scale-105"
-                      >
-                        {isPlaying ? (
-                          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
-                          </svg>
-                        ) : (
-                          <svg className="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M8 5v14l11-7z"/>
-                          </svg>
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="space-y-2">
-                      <div
-                        className="w-full h-2 bg-gray-200 rounded-full cursor-pointer hover:h-3 transition-all duration-200"
-                        onClick={handleSeek}
-                        onMouseDown={handleMouseDown}
-                        onMouseUp={handleMouseUp}
-                      >
-                        <div
-                          className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-200 hover:from-blue-600 hover:to-indigo-700"
-                          style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-                        >
-                          <div className="w-4 h-4 bg-white rounded-full shadow-md float-right -mt-1 -mr-2 hover:scale-110 transition-transform duration-200"></div>
-                        </div>
-                      </div>
-                      
-                      {/* Time Display */}
-                      <div className="flex justify-between text-sm text-gray-600">
-                        <span>{formatTime(currentTime)}</span>
-                        <span>{formatTime(duration)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
-              )}
-            </div>
-          </div>
-        )}
       </div>
       
       {/* Progressive Compositing Stepper */}
@@ -961,20 +840,18 @@ export default function Whiteboard() {
               <div className="mt-4">
                 {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
                   <div className="w-full">
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => {
-                          if (!audioRef.current) return;
-                          if (isPlaying) { audioRef.current.pause(); setIsPlaying(false); }
-                          else { audioRef.current.play(); setIsPlaying(true); }
-                        }}
-                        className="px-3 py-2 rounded-md bg-white border"
-                      >{isPlaying ? 'Pause' : 'Play'}</button>
-                      <div className="flex-1 bg-gray-200 h-3 rounded overflow-hidden">
-                        <div style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} className="h-3 bg-blue-600" />
-                      </div>
-                    </div>
-                    <audio ref={audioRef} src={convertedMusic} className="hidden" />
+                    <AudioPlayer
+                      src={convertedMusic}
+                      style={{
+                        borderRadius: '8px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                      }}
+                      customAdditionalControls={[]}
+                      showJumpControls={true}
+                      customVolumeControls={[]}
+                      layout="horizontal"
+                      preload="metadata"
+                    />
                   </div>
                 ) : (
                   <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
