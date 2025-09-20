@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Stage, Layer, Line, Rect } from "react-konva";
+import AudioPlayer from 'react-h5-audio-player';
+import 'react-h5-audio-player/lib/styles.css';
 
 type Point = number;
 type BrushType = 'normal' | 'rough' | 'thin' | 'highlighter' | 'spray' | 'marker';
@@ -956,25 +958,35 @@ export default function Whiteboard() {
         {/* Results area */}
         <div className="mt-6">
           {stage === 'done' && convertedMusic && (
-            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-900">
-              <strong>Converted Music:</strong>
+            <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                <strong className="text-lg">Generated Music</strong>
+              </div>
               <div className="mt-4">
                 {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
-                  <div className="w-full">
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => {
-                          if (!audioRef.current) return;
-                          if (isPlaying) { audioRef.current.pause(); setIsPlaying(false); }
-                          else { audioRef.current.play(); setIsPlaying(true); }
-                        }}
-                        className="px-3 py-2 rounded-md bg-white border"
-                      >{isPlaying ? 'Pause' : 'Play'}</button>
-                      <div className="flex-1 bg-gray-200 h-3 rounded overflow-hidden">
-                        <div style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} className="h-3 bg-blue-600" />
-                      </div>
-                    </div>
-                    <audio ref={audioRef} src={convertedMusic} className="hidden" />
+                  <div className="bg-white rounded-lg p-4 shadow-sm">
+                    <AudioPlayer
+                      src={convertedMusic}
+                      onPlay={() => console.log('Playing')}
+                      onPause={() => console.log('Paused')}
+                      onEnded={() => console.log('Ended')}
+                      onSeeked={() => console.log('Seeked')}
+                      style={{
+                        width: '100%',
+                        borderRadius: '8px',
+                      }}
+                      customAdditionalControls={[]}
+                      showJumpControls={true}
+                      showDownloadProgress={false}
+                      showFilledProgress={true}
+                      showFilledVolume={true}
+                      layout="horizontal"
+                      progressJumpSteps={{
+                        backward: 5000,
+                        forward: 5000,
+                      }}
+                    />
                   </div>
                 ) : (
                   <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
