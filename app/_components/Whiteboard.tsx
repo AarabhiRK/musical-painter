@@ -15,14 +15,14 @@ type Stroke = {
 };
 
 export default function Whiteboard() {
-  // Emotion analysis state
-  const [emotionSummary, setEmotionSummary] = useState<string | null>(null);
+  // Converted music analysis state
+  const [convertedMusic, setConvertedMusic] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Export and analyze function
-  const analyzeEmotions = async () => {
-    setEmotionSummary(null);
+  const analyzeDrawing = async () => {
+    setConvertedMusic(null);
     setError(null);
     setAnalyzing(true);
     try {
@@ -35,15 +35,9 @@ export default function Whiteboard() {
         body: JSON.stringify({ imageBase64: base64 })
       });
       const data = await res.json();
-      
-      // Check if the response contains an error
-      if (!res.ok || data.error) {
-        throw new Error(data.error?.message || data.error || `API request failed with status ${res.status}`);
-      }
-      
       // Gemini API returns candidates[0].content.parts[0].text
-      const summary = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No summary returned.';
-      setEmotionSummary(summary);
+      const summary = data?.candidates?.[0]?.content?.parts?.[0]?.text || data?.error || 'No summary returned.';
+      setConvertedMusic(summary);
     } catch (e: any) {
       setError(e.message || 'Failed to analyze.');
     } finally {
@@ -571,19 +565,24 @@ export default function Whiteboard() {
           </Stage>
         </div>
       </div>
-      {/* Analyze Emotions Button & Result */}
+      {/* Analyze Drawing Button & Result */}
       <div className="mt-8 flex flex-col items-center">
         <button
-          onClick={analyzeEmotions}
+          onClick={analyzeDrawing}
           disabled={analyzing}
           className="px-6 py-3 rounded-xl border border-blue-700 bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
         >
-          {analyzing ? 'Analyzing...' : 'Analyze Emotions'}
+          {analyzing ? 'Analyzing...' : 'Analyze Drawing'}
         </button>
-        {emotionSummary && (
+        <p className="mt-3 max-w-xl text-sm text-gray-600 text-center">
+          Convert this drawing into a short musical interpretation, a way to represent your visual art into a musical
+          piece (works for scenes, patterns, and realistic drawings alike).
+        </p>
+        <p className="mt-2 max-w-xl text-xs text-gray-500 italic text-center"></p>
+    {convertedMusic && (
           <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl text-center">
-            <strong>Emotion Summary:</strong>
-            <div className="mt-2 whitespace-pre-line">{emotionSummary}</div>
+      <strong>Converted Music:</strong>
+      <div className="mt-2 whitespace-pre-line">{convertedMusic}</div>
           </div>
         )}
         {error && (
