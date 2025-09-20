@@ -15,6 +15,35 @@ type Stroke = {
 };
 
 export default function Whiteboard() {
+  // Emotion analysis state
+  const [emotionSummary, setEmotionSummary] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Export and analyze function
+  const analyzeEmotions = async () => {
+    setEmotionSummary(null);
+    setError(null);
+    setAnalyzing(true);
+    try {
+      if (!stageRef.current) throw new Error('No drawing to analyze.');
+      const uri = stageRef.current.toDataURL({ pixelRatio: 2 });
+      const base64 = uri.replace(/^data:image\/png;base64,/, "");
+      const res = await fetch("/api/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64 })
+      });
+      const data = await res.json();
+      // Gemini API returns candidates[0].content.parts[0].text
+      const summary = data?.candidates?.[0]?.content?.parts?.[0]?.text || data?.error || 'No summary returned.';
+      setEmotionSummary(summary);
+    } catch (e: any) {
+      setError(e.message || 'Failed to analyze.');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [current, setCurrent] = useState<Stroke | null>(null);
   const [color, setColor] = useState("#2563eb");
@@ -535,6 +564,27 @@ export default function Whiteboard() {
             </Layer>
           </Stage>
         </div>
+      </div>
+      {/* Analyze Emotions Button & Result */}
+      <div className="mt-8 flex flex-col items-center">
+        <button
+          onClick={analyzeEmotions}
+          disabled={analyzing}
+          className="px-6 py-3 rounded-xl border border-blue-700 bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+        >
+          {analyzing ? 'Analyzing...' : 'Analyze Emotions'}
+        </button>
+        {emotionSummary && (
+          <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl text-center">
+            <strong>Emotion Summary:</strong>
+            <div className="mt-2 whitespace-pre-line">{emotionSummary}</div>
+          </div>
+        )}
+        {error && (
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 max-w-xl text-center">
+            {error}
+          </div>
+        )}
       </div>
     </div>
   );
