@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Stage, Layer, Line, Rect } from "react-konva";
 
 type Point = number;
@@ -95,7 +95,16 @@ export default function Whiteboard() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [historyIndex, history]);
 
-  const onDown = (e: any) => {
+  // Cleanup Konva Stage on unmount
+  useEffect(() => {
+    return () => {
+      if (stageRef.current) {
+        stageRef.current.destroy();
+      }
+    };
+  }, []);
+
+  const onDown = useCallback((e: any) => {
     const pos = e.target.getStage().getPointerPosition();
     const brushProps = getBrushProperties(brushType, width);
     const s: Stroke = {
@@ -107,9 +116,9 @@ export default function Whiteboard() {
       globalCompositeOperation: erasing ? "destination-out" : "source-over",
     };
     setCurrent(s);
-  };
+  }, [brushType, width, color, erasing]);
 
-  const onMove = (e: any) => {
+  const onMove = useCallback((e: any) => {
     if (!current) return;
     const stage = e.target.getStage();
     const point = stage.getPointerPosition();
@@ -117,9 +126,9 @@ export default function Whiteboard() {
       ...current,
       points: current.points.concat([point.x, point.y]),
     });
-  };
+  }, [current]);
 
-  const onUp = () => {
+  const onUp = useCallback(() => {
     if (!current) return;
     const newStrokes = [...strokes, current];
     setStrokes(newStrokes);
@@ -127,47 +136,86 @@ export default function Whiteboard() {
     
     // Add to history for undo/redo
     addToHistory(newStrokes);
-  };
+  }, [current, strokes]);
 
   // Add stroke to history
-  const addToHistory = (newStrokes: Stroke[]) => {
+  const addToHistory = useCallback((newStrokes: Stroke[]) => {
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push(newStrokes);
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
-  };
+  }, [history, historyIndex]);
 
   // Undo function
-  const undo = () => {
+  const undo = useCallback(() => {
     if (historyIndex > 0) {
       const newIndex = historyIndex - 1;
       setHistoryIndex(newIndex);
       setStrokes(history[newIndex]);
     }
-  };
+  }, [historyIndex, history]);
 
   // Redo function
-  const redo = () => {
+  const redo = useCallback(() => {
     if (historyIndex < history.length - 1) {
       const newIndex = historyIndex + 1;
       setHistoryIndex(newIndex);
       setStrokes(history[newIndex]);
     }
-  };
+  }, [historyIndex, history]);
 
-  const clear = () => {
+  const clear = useCallback(() => {
     setStrokes([]);
     addToHistory([]);
-  };
+  }, [addToHistory]);
 
-  const exportPNG = () => {
+  const exportPNG = useCallback(() => {
+    if (!stageRef.current) return;
     const uri = stageRef.current.toDataURL({ pixelRatio: 2, mimeType: "image/png" });
     // Download now; later you'll POST this to /api/analyze
     const a = document.createElement("a");
     a.href = uri;
     a.download = "drawing.png";
     a.click();
-  };
+  }, []);
+
+  // Memoize stroke rendering for better performance
+  const renderedStrokes = useMemo(() => {
+    return strokes.map((s, i) => {
+      const brushProps = getBrushProperties(s.brushType, s.width);
+      return (
+        <Line
+          key={i}
+          points={s.points}
+          stroke={s.color}
+          strokeWidth={brushProps.width}
+          opacity={brushProps.opacity}
+          tension={brushProps.tension}
+          lineCap={brushProps.lineCap}
+          lineJoin={brushProps.lineJoin}
+          globalCompositeOperation={s.globalCompositeOperation}
+        />
+      );
+    });
+  }, [strokes]);
+
+  // Memoize current stroke rendering
+  const renderedCurrentStroke = useMemo(() => {
+    if (!current) return null;
+    const brushProps = getBrushProperties(current.brushType, current.width);
+    return (
+      <Line
+        points={current.points}
+        stroke={current.color}
+        strokeWidth={brushProps.width}
+        opacity={brushProps.opacity}
+        tension={brushProps.tension}
+        lineCap={brushProps.lineCap}
+        lineJoin={brushProps.lineJoin}
+        globalCompositeOperation={current.globalCompositeOperation}
+      />
+    );
+  }, [current]);
 
   return (
     <div className="w-full max-w-6xl mx-auto">
@@ -279,6 +327,7 @@ export default function Whiteboard() {
       <div className="bg-white border-2 border-gray-200 rounded-xl shadow-lg overflow-hidden">
         <div ref={containerRef} className="w-full">
           <Stage
+            key="whiteboard-stage"
             ref={stageRef}
             width={size.w}
             height={size.h}
@@ -297,37 +346,8 @@ export default function Whiteboard() {
             <Layer>
               {/* White background to ensure opaque export */}
               <Rect x={0} y={0} width={size.w} height={size.h} fill="#ffffff" />
-              {strokes.map((s, i) => {
-                const brushProps = getBrushProperties(s.brushType, s.width);
-                return (
-                  <Line
-                    key={i}
-                    points={s.points}
-                    stroke={s.color}
-                    strokeWidth={brushProps.width}
-                    opacity={brushProps.opacity}
-                    tension={brushProps.tension}
-                    lineCap={brushProps.lineCap}
-                    lineJoin={brushProps.lineJoin}
-                    globalCompositeOperation={s.globalCompositeOperation}
-                  />
-                );
-              })}
-              {current && (() => {
-                const brushProps = getBrushProperties(current.brushType, current.width);
-                return (
-                  <Line
-                    points={current.points}
-                    stroke={current.color}
-                    strokeWidth={brushProps.width}
-                    opacity={brushProps.opacity}
-                    tension={brushProps.tension}
-                    lineCap={brushProps.lineCap}
-                    lineJoin={brushProps.lineJoin}
-                    globalCompositeOperation={current.globalCompositeOperation}
-                  />
-                );
-              })()}
+              {renderedStrokes}
+              {renderedCurrentStroke}
             </Layer>
           </Stage>
         </div>
