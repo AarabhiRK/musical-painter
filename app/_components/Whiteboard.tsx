@@ -26,6 +26,7 @@ export default function Whiteboard() {
     bgTransform: { x: number; y: number; width: number; height: number; rotation: number };
     convertedMusic: string | null;
     timestamp: string;
+    thumb?: string | null;
   };
   
   const [boards, setBoards] = useState<Board[]>([]);
@@ -46,28 +47,20 @@ export default function Whiteboard() {
       timestamp: new Date().toISOString(),
     };
     
+    // On refresh, clear persisted boards and start fresh (per UX request)
     try {
-      const savedBoards = localStorage.getItem('boards');
-      const savedActiveId = localStorage.getItem('activeBoardId');
-      
-      if (savedBoards) {
-        const parsedBoards = JSON.parse(savedBoards);
-        setBoards(parsedBoards.length > 0 ? parsedBoards : [defaultBoard]);
-        setActiveBoardId(savedActiveId || parsedBoards[0]?.id || defaultBoard.id);
-      } else {
-        setBoards([defaultBoard]);
-        setActiveBoardId(defaultBoard.id);
-      }
-    } catch (e) {
-      setBoards([defaultBoard]);
-      setActiveBoardId(defaultBoard.id);
-    }
+      localStorage.removeItem('boards');
+      localStorage.removeItem('activeBoardId');
+    } catch (e) {}
+    setBoards([defaultBoard]);
+    setActiveBoardId(defaultBoard.id);
   }, []);
 
   // Save boards to localStorage whenever boards change
   useEffect(() => {
     try {
-      localStorage.setItem('boards', JSON.stringify(boards));
+      // Persist savedBoards (gallery) but do NOT persist live 'boards' to ensure refresh clears them
+      // Keep activeBoardId in storage only for UX within the session
       localStorage.setItem('activeBoardId', activeBoardId);
     } catch (e) {
       console.error('Failed to save boards to localStorage:', e);
@@ -709,54 +702,74 @@ export default function Whiteboard() {
   }, []);
 
   // Generate thumbnail for a board
-  const generateBoardThumbnail = useCallback((board: Board) => {
-    // Create a temporary canvas to render the board content
+  // We'll generate thumbnails asynchronously whenever boards change and store them on each board as `thumb`.
+  const generateThumbnailForBoard = useCallback(async (board: Board) => {
     const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 48;
+    canvas.width = 128; // slightly larger for better quality when scaled
+    canvas.height = 80;
     const ctx = canvas.getContext('2d');
-    
     if (!ctx) return null;
-    
-    // Fill white background
+    // White background
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, 64, 48);
-    
-    // Draw background image if exists
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw background image synchronously if possible (await load)
     if (board.backgroundImage) {
-      const img = new Image();
-      img.src = board.backgroundImage;
-      img.onload = () => {
-        const scale = Math.min(64 / img.width, 48 / img.height);
-        const w = img.width * scale;
-        const h = img.height * scale;
-        const x = (64 - w) / 2;
-        const y = (48 - h) / 2;
-        ctx.drawImage(img, x, y, w, h);
-      };
+      await new Promise<void>((res) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+          const w = img.width * scale;
+          const h = img.height * scale;
+          ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+          res();
+        };
+        img.onerror = () => res();
+        img.src = board.backgroundImage || '';
+      });
     }
-    
-    // Draw strokes scaled down for thumbnail
-    board.strokes.forEach(stroke => {
-      if (stroke.points.length < 4) return;
-      
-      ctx.strokeStyle = stroke.color;
-      ctx.lineWidth = Math.max(0.5, stroke.width * 0.1); // Scale down significantly
+
+    // Draw strokes scaled to thumbnail
+    const strokes = board.strokes || [];
+    strokes.forEach((s: any) => {
+      if (!s || !s.points || s.points.length < 4) return;
+      ctx.strokeStyle = s.color || '#000';
+      ctx.lineWidth = Math.max(0.6, (s.width || 4) * 0.12);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.globalAlpha = stroke.opacity || 1;
-      
+      ctx.globalAlpha = s.opacity ?? 1;
       ctx.beginPath();
-      ctx.moveTo(stroke.points[0] * 0.08, stroke.points[1] * 0.08); // Scale down to fit thumbnail
-      
-      for (let i = 2; i < stroke.points.length; i += 2) {
-        ctx.lineTo(stroke.points[i] * 0.08, stroke.points[i + 1] * 0.08);
+      // scale factor: assume original stage size is available in `size`
+      const scaleX = (canvas.width / Math.max(1, size.w)) || 1;
+      const scaleY = (canvas.height / Math.max(1, size.h)) || 1;
+      ctx.moveTo((s.points[0] || 0) * scaleX, (s.points[1] || 0) * scaleY);
+      for (let i = 2; i < s.points.length; i += 2) {
+        ctx.lineTo((s.points[i] || 0) * scaleX, (s.points[i + 1] || 0) * scaleY);
       }
       ctx.stroke();
     });
-    
-    return canvas.toDataURL();
-  }, []);
+
+    return canvas.toDataURL('image/png');
+  }, [size.w, size.h]);
+
+  // Whenever boards or size change, regenerate thumbnails and store them on the board state (debounced-ish via effect)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (let i = 0; i < boards.length; i++) {
+        const b = boards[i];
+        try {
+          const thumb = await generateThumbnailForBoard(b);
+          if (cancelled) return;
+          if (thumb && thumb !== b.thumb) {
+            setBoards(prev => prev.map(p => p.id === b.id ? { ...p, thumb } : p));
+          }
+        } catch (e) {}
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [boards, size.w, size.h, generateThumbnailForBoard]);
 
   // Memoize stroke rendering for better performance
   const renderedStrokes = useMemo(() => {
@@ -986,18 +999,11 @@ export default function Whiteboard() {
               >
                 {/* Thumbnail Preview */}
                 <div className="w-16 h-12 bg-gray-100 rounded border border-gray-200 overflow-hidden flex items-center justify-center">
-                  {(() => {
-                    const thumbnail = generateBoardThumbnail(board);
-                    return thumbnail ? (
-                      <img 
-                        src={thumbnail} 
-                        alt={`${board.name} preview`}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="text-gray-400 text-xs">Empty</div>
-                    );
-                  })()}
+                  {board.thumb ? (
+                    <img src={board.thumb} alt={`${board.name} preview`} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="text-gray-400 text-xs">Empty</div>
+                  )}
                 </div>
                 
                 {/* Board Name */}

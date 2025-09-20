@@ -1,14 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-type GeminiResponse = any;
-
-function extractTextFromGemini(data: GeminiResponse) {
-  return (
-    data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-    data?.output?.[0]?.content?.text ||
-    JSON.stringify(data)
-  );
-}
+import extractTextFromGemini from '../../../lib/gemini';
 
 // Map number of valid boards to per-board duration (seconds)
 const durationMap: Record<number, number> = {
@@ -41,8 +32,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No valid boards to analyze. Each board needs at least 5 stroke points.' }, { status: 400 });
     }
 
-    // Limit to at most 4 boards for duration splits as requested; if more, keep first 4
-    const limitedBoards = validBoards.slice(0, Math.max(1, Math.min(validBoards.length, 8)));
+  // Limit to at most 4 boards for duration splits as requested; if more, keep first 4
+  const limitedBoards = validBoards.slice(0, Math.min(validBoards.length, 4));
 
     // Determine per-board duration
     const num = limitedBoards.length;
@@ -201,8 +192,11 @@ export async function POST(req: NextRequest) {
 
     const trackUrl = finalMeta.track_url || finalMeta.trackUrl || finalMeta.track?.downloadUrl || finalMeta.track?.url || finalMeta?.track_url || null;
 
+    const perBoardDurations = perBoardResults.map((r: any) => ({ id: r.id, duration: r.segment_duration || perBoardDuration }));
+
     return NextResponse.json({
       perBoardResults,
+      perBoardDurations,
       combinedPrompt,
       beatovenPrompt: promptToSend,
       task_id: taskId,
