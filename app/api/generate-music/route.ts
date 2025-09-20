@@ -33,16 +33,24 @@ export async function POST(req: NextRequest) {
     const perBoardResults: Array<any> = [];
     for (let i = 0; i < limitedBoards.length; i++) {
       const b = limitedBoards[i];
-      const humanPrompt = `
-You are a music assistant. Convert the attached board into a concise, evocative musical brief for Beatoven. Include:
-- Mood, genre, tempo/BPM
-- Energy (0-1), key, instruments, percussion, texture, rhythm
-- Duration: ${perBoardDuration}s
-- Evolution: build/hold/release across segment
-- Transition hint to next segment
+      const humanPrompt = `You are a professional music supervisor creating prompts for AI music generation based on the attached drawing.
 
-Start with 'Background music:' and keep it natural-language, ready for Beatoven.
-      `;
+Analyze the image and write a natural-language prompt that can be directly used to generate music matching its theme, mood, and visuals. Start exactly with:
+"Background music:"
+
+Include the following details naturally in the paragraph:
+1. Overall image meaning/theme: describe what the image depicts and the message or emotion conveyed specifically and clearly.
+2. Mood: overall emotional tone (e.g., calm, melancholic, energetic).
+3. Genre: a fitting genre (e.g., ambient, lo-fi hip hop, classical piano, synthwave, acoustic folk, cinematic orchestral).
+4. Tempo/BPM: approximate beats per minute suitable for the image.
+5. Key: musical key (e.g., A minor) or "none".
+6. Instruments: lead instruments and percussion that match the theme and visuals.
+7. Texture/Rhythm: musical textures, rhythm, or pace (slow, fast, syncopated, flowing).
+8. Evolution: describe how the track builds, holds, or releases over time.
+9. Duration: ${perBoardDuration} seconds.
+
+Keep output 30–100 words, as a single natural paragraph. Only output the final prompt.`;
+;
 
       try {
         const geminiRes = await fetch(
@@ -74,10 +82,26 @@ Ensure coherence: align tempo, crossfade 1-3s, maintain sonic motifs, avoid abru
     let refinedPrompt: string | null = null;
     try {
       const refinerHuman = `
-You are a senior music assistant. Combine per-segment briefs into a coherent track preserving board order. Output:
-REFINED_PROMPT: 80-160 word natural-language prompt suitable for Beatoven. Include evolution (energy, instrumentation, tempo/key) and transitions.
-SEGMENT_TIMINGS: One line per segment: '1) <id/name> - start: XXs - duration: YYs - mood: ... - transition: brief'.
-      `;
+You are a senior music supervisor. Combine the per-segment musical briefs into one unified prompt for Beatoven.
+
+Requirements:
+- Preserve the chronological order of segments.
+- Ensure coherence across tempo, genre, and instrumentation.
+- Smooth transitions between segments (crossfade 1–3s, carry motifs forward).
+- Total track duration: ~${totalDuration}s.
+
+Output format:
+REFINED_PROMPT:
+Write an 80–160 word natural-language brief ready for Beatoven. Include:
+1. Overall theme/message of the combined boards clearly and specifically based on drawing.
+2. Unified mood and genre.
+3. Tempo/BPM and key (consistent or evolving if necessary).
+4. Core instruments and textures appearing across sections.
+5. Segment evolution: describe how energy builds/holds/releases across the whole track.
+6. Transition style (how one segment flows into the next).
+
+SEGMENT_TIMINGS:
+One line per segment in order, so that the music has transitions from board to board`;
       const refinerContents: any[] = [{ parts: [{ text: refinerHuman }] }];
       perBoardResults.forEach((r, idx) => refinerContents.push({ parts: [{ text: `Segment ${idx + 1} (${r.id || r.name}): ${r.brief || r.raw} Duration: ${r.segment_duration}s.` }] }));
 

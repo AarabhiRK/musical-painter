@@ -18,20 +18,23 @@ export async function POST(req: NextRequest) {
     const perImage: Array<{ brief: string; raw: any }> = [];
     for (const imageBase64 of imagesBase64) {
       const humanPrompt = `
-You are a music prompt specialist for Beatoven-style generation. Analyze the attached image and produce a concise, evocative musical brief. Start with 'Background music:'. Include:
-- Mood (calm, melancholic, energetic)
-- Short genre (ambient, cinematic, electronic, jazz, orchestral, pop)
-- Optional BPM/tempo hint
-- Energy (0-1)
-- Suggested key or 'none'
-- Primary instruments & percussion
-- Texture & rhythm hints
-- 1-2 sentence evolution description (build/hold/release)
-- Suggested duration in seconds
-- 4–8 keyword/theme tags
+You are a professional music supervisor creating prompts for AI music generation based on the attached drawing.
 
-Keep it natural-language, vivid, and ready to paste into Beatoven.
-      `;
+Analyze the image and write a natural-language prompt that can be directly used to generate music matching its theme, mood, and visuals. Start exactly with:
+"Background music:"
+
+Include the following details naturally in the paragraph:
+1. Overall image meaning/theme: describe what the image depicts and the message or emotion conveyed specifically and clearly.
+2. Mood: overall emotional tone (e.g., calm, melancholic, energetic).
+3. Genre: a fitting genre (e.g., ambient, lo-fi hip hop, classical piano, synthwave, acoustic folk, cinematic orchestral).
+4. Tempo/BPM: approximate beats per minute suitable for the image.
+5. Key: musical key (e.g., A minor) or "none".
+6. Instruments: lead instruments and percussion that match the theme and visuals.
+7. Texture/Rhythm: musical textures, rhythm, or pace (slow, fast, syncopated, flowing).
+8. Evolution: describe how the track builds, holds, or releases over time.
+9. Duration: realistic length in seconds.
+
+Keep output 30–100 words, as a single natural paragraph. Only output the final prompt.`;
 
       const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
@@ -50,16 +53,22 @@ Keep it natural-language, vivid, and ready to paste into Beatoven.
 
     if (perImage.length > 1) {
       const combinePrompt = `
-You are an expert music director. Combine multiple per-segment musical briefs into a single Beatoven-ready prompt. Preserve segment order. Output ~60-100 words:
-- Overall mood & brief genre
-- Recommended tempo/BPM
-- Core instruments or textures across segments
-- Evolution across segments (build/hold/release)
-- Timestamped cues mapping segments to start times
-- 6–10 keywords/themes
+You are an expert music director combining multiple music briefs into one master prompt for AI music generation. 
 
-Output only the final natural-language prompt ready for Beatoven.
-      `;
+1. First, understand the meaning, theme, and mood of each board in order.  
+2. Then, create a single cohesive natural-language prompt that can be used to generate music matching the full sequence. Start the prompt exactly with:
+"Background music:"
+
+Include:
+- Overall mood and primary genre unifying all segments specifically and clearly.
+- Recommended tempo/BPM (exact number preferred).
+- Core instruments and textures that appear across sections.
+- Evolution: describe how the track builds, holds, or releases over time across all boards.
+- Optional timestamped cues for segments only if it makes sense (e.g., "0s–20s: ambient intro, 20s–40s: cinematic build").
+- Duration: total suggested length in seconds.
+
+Output only the final prompt in ~90–100 words.
+`;
 
       try {
         const combineRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
