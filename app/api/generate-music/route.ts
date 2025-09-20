@@ -28,8 +28,18 @@ export async function POST(req: NextRequest) {
 
     // Filter valid boards: accept any board that either has an uploaded image or has >=5 stroke points
     const validBoards = boards.filter(b => (b.imageBase64 && b.imageBase64.length > 100) || (b.strokeCount || 0) >= 5);
-    if (validBoards.length === 0) {
-      return NextResponse.json({ error: 'No valid boards to analyze. Each board must have either an uploaded background image or at least 5 stroke points.' }, { status: 400 });
+    
+    // If there are multiple boards, ALL boards must be valid
+    if (boards.length > 1) {
+      if (validBoards.length !== boards.length) {
+        return NextResponse.json({ 
+          error: `All boards must have either an uploaded background image or at least 5 stroke points. Currently ${validBoards.length} out of ${boards.length} boards meet this requirement.` 
+        }, { status: 400 });
+      }
+    } else if (validBoards.length === 0) {
+      return NextResponse.json({ 
+        error: 'No valid boards to analyze. Each board must have either an uploaded background image or at least 5 stroke points.' 
+      }, { status: 400 });
     }
 
   // Limit to at most 4 boards for duration splits as requested; if more, keep first 4

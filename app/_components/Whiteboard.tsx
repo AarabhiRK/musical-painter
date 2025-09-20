@@ -1180,6 +1180,31 @@ export default function Whiteboard() {
     return renderShape(currentShape, 'current-shape');
   }, [currentShape, isDrawingShape, renderShape]);
 
+  // Check if stroke requirements are met for music generation
+  const canGenerateMusic = useMemo(() => {
+    if (boards.length === 0) return false;
+    
+    // Check if all boards meet the requirement (5+ strokes or uploaded image)
+    const validBoards = boards.filter(board => 
+      (board.backgroundImage && board.backgroundImage.length > 100) || 
+      (board.strokes && board.strokes.length >= 5)
+    );
+    
+    // For multiple boards, all must be valid. For single board, just one needs to be valid.
+    return boards.length === 1 ? validBoards.length > 0 : validBoards.length === boards.length;
+  }, [boards]);
+
+  // Get stroke count info for UI feedback
+  const strokeCountInfo = useMemo(() => {
+    return boards.map(board => ({
+      id: board.id,
+      name: board.name,
+      strokeCount: board.strokes ? board.strokes.length : 0,
+      hasImage: board.backgroundImage && board.backgroundImage.length > 100,
+      isValid: (board.backgroundImage && board.backgroundImage.length > 100) || (board.strokes && board.strokes.length >= 5)
+    }));
+  }, [boards]);
+
   return (
     <div className="w-full max-w-7xl mx-auto">
       <style>{`
@@ -1700,11 +1725,42 @@ export default function Whiteboard() {
       <div className="mt-8 flex flex-col items-center">
         <button
           onClick={analyzeDrawing}
-          disabled={analyzing}
-          className="px-6 py-3 rounded-xl border border-blue-700 bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+          disabled={analyzing || !canGenerateMusic}
+          className={`px-6 py-3 rounded-xl border font-semibold shadow transition-all ${
+            analyzing || !canGenerateMusic
+              ? 'border-gray-300 bg-gray-300 text-gray-500 cursor-not-allowed'
+              : 'border-blue-700 bg-blue-700 text-white hover:bg-blue-800'
+          }`}
         >
           {analyzing ? 'Analyzing...' : 'Generate Music from Drawing'}
         </button>
+        
+        {/* Stroke count feedback */}
+        {!canGenerateMusic && (
+          <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg max-w-xl">
+            <p className="text-sm text-yellow-800 font-medium mb-2">
+              {boards.length === 1 
+                ? 'Need at least 5 strokes or upload an image to generate music'
+                : 'All boards need at least 5 strokes or uploaded images to generate music'
+              }
+            </p>
+            <div className="space-y-1">
+              {strokeCountInfo.map(board => (
+                <div key={board.id} className="flex items-center justify-between text-xs">
+                  <span className={`${board.isValid ? 'text-green-700' : 'text-yellow-700'}`}>
+                    {board.name}: {board.strokeCount} strokes {board.hasImage ? '+ image' : ''}
+                  </span>
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    board.isValid ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                  }`}>
+                    {board.isValid ? '✓ Ready' : 'Need 5+ strokes'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
         <p className="mt-3 max-w-xl text-sm text-gray-600 text-center">
           Convert this drawing into a short musical interpretation, a way to represent your visual art into a musical
           piece (works for scenes, patterns, and realistic drawings alike).
