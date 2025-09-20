@@ -49,6 +49,15 @@ export default function Whiteboard() {
     
     // On refresh, clear persisted boards and start fresh (per UX request)
     try {
+      // Client-side preflight: allow analysis if any board has an uploaded background image.
+      const totalStrokes = boards.reduce((acc, b) => acc + ((b.strokes || []).length || 0), 0);
+      const anyHasImage = boards.some(b => !!b.backgroundImage);
+      if (!anyHasImage && totalStrokes <= 5) {
+        setError('Please draw more (at least 5 stroke points) or upload an image to analyze.');
+        setAnalyzing(false);
+        setStage('idle');
+        return;
+      }
       localStorage.removeItem('boards');
       localStorage.removeItem('activeBoardId');
     } catch (e) {}
@@ -990,7 +999,7 @@ export default function Whiteboard() {
             {boards.map((board) => (
               <div
                 key={board.id}
-                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 min-w-[120px] ${
+                className={`relative flex flex-col items-center gap-1 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 min-w-[120px] ${
                   activeBoardId === board.id
                     ? 'bg-blue-50 text-blue-700 border border-blue-200'
                     : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
@@ -1452,10 +1461,10 @@ export default function Whiteboard() {
       
       {/* Progressive Compositing Stepper */}
       <div className="mt-8 w-full max-w-3xl mx-auto">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col items-center">
           {/* Stepper */}
-          <div className="flex-1">
-            <div className="flex items-center justify-between gap-4">
+          <div className="w-full">
+            <div className="flex items-center justify-center gap-8">
               {[
                 { id: 'analyze', label: 'Analyze' },
                 { id: 'compose', label: 'Compose' },
@@ -1491,19 +1500,8 @@ export default function Whiteboard() {
             </div>
           </div>
 
-          {/* Actions */}
-          <div className="flex items-center gap-3">
-            {stage !== 'analyzing' && stage !== 'composing' && (
-              <button
-                onClick={() => {
-                  analyzeDrawing();
-                }}
-                className="px-6 py-3 rounded-xl border border-blue-700 bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 transition-all"
-              >
-                {stage === 'idle' ? 'Start' : stage === 'done' ? 'Analyze Again' : 'Analyze'}
-              </button>
-            )}
-
+          {/* Actions (centered below stepper) */}
+          <div className="w-full flex justify-center mt-4">
             {(stage === 'analyzing' || stage === 'composing') && (
               <div className="flex items-center gap-2">
                 <svg className="animate-spin h-5 w-5 text-blue-600" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>

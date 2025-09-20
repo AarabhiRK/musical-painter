@@ -26,10 +26,10 @@ export async function POST(req: NextRequest) {
     const beatovenBase = process.env.BEATOVEN_BASE_URL || 'https://public-api.beatoven.ai';
     if (!beatovenKey) return NextResponse.json({ error: 'BEATOVEN_API_KEY not set' }, { status: 500 });
 
-    // Filter valid boards (must have >=5 strokes and image data)
-    const validBoards = boards.filter(b => b.imageBase64 && (b.strokeCount || 0) >= 5);
+    // Filter valid boards: accept any board that either has an uploaded image or has >=5 stroke points
+    const validBoards = boards.filter(b => (b.imageBase64 && b.imageBase64.length > 100) || (b.strokeCount || 0) >= 5);
     if (validBoards.length === 0) {
-      return NextResponse.json({ error: 'No valid boards to analyze. Each board needs at least 5 stroke points.' }, { status: 400 });
+      return NextResponse.json({ error: 'No valid boards to analyze. Each board must have either an uploaded background image or at least 5 stroke points.' }, { status: 400 });
     }
 
   // Limit to at most 4 boards for duration splits as requested; if more, keep first 4
