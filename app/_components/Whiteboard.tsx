@@ -218,44 +218,44 @@ export default function Whiteboard() {
   }, [current]);
 
   return (
-    <div className="w-full max-w-6xl mx-auto">
+    <div className="w-full max-w-7xl mx-auto">
       {/* Toolbar */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6 shadow-sm">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
-              <span>Color</span>
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-8 shadow-sm">
+        <div className="flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
+              <span className="text-gray-600">Color</span>
               <input 
                 type="color" 
                 value={color} 
                 onChange={(e) => setColor(e.target.value)}
-                className="w-8 h-8 rounded border border-gray-300 cursor-pointer"
+                className="w-10 h-10 rounded-xl border-2 border-gray-200 cursor-pointer hover:border-gray-300 transition-colors"
               />
             </label>
           </div>
           
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
-              <span>Width</span>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
+              <span className="text-gray-600">Width</span>
               <input
                 type="range"
                 min={1}
                 max={32}
                 value={width}
                 onChange={(e) => setWidth(parseInt(e.target.value))}
-                className="w-20"
+                className="w-24 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
               />
-              <span className="text-xs text-gray-500 min-w-[30px]">{width}px</span>
+              <span className="text-xs text-gray-500 min-w-[35px] font-mono">{width}px</span>
             </label>
           </div>
 
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
-              <span>Brush</span>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
+              <span className="text-gray-600">Brush</span>
               <select
                 value={brushType}
                 onChange={(e) => setBrushType(e.target.value as BrushType)}
-                className="px-3 py-1 rounded border border-gray-300 bg-white text-sm"
+                className="px-4 py-2 rounded-xl border border-gray-200 bg-white text-sm hover:border-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200"
               >
                 <option value="normal">Normal</option>
                 <option value="rough">Rough</option>
@@ -265,16 +265,16 @@ export default function Whiteboard() {
             </label>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {/* Undo/Redo buttons */}
-            <div className="flex items-center gap-1 border-r border-gray-300 pr-3 mr-2">
+            <div className="flex items-center gap-2 border-r border-gray-200 pr-4 mr-2">
               <button
                 onClick={undo}
                 disabled={historyIndex <= 0}
-                className={`px-3 py-2 rounded-lg border transition-colors ${
+                className={`px-4 py-2 rounded-xl border transition-all duration-200 ${
                   historyIndex <= 0
                     ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
-                    : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
                 }`}
                 title="Undo (Ctrl/Cmd+Z)"
               >
@@ -283,10 +283,10 @@ export default function Whiteboard() {
               <button
                 onClick={redo}
                 disabled={historyIndex >= history.length - 1}
-                className={`px-3 py-2 rounded-lg border transition-colors ${
+                className={`px-4 py-2 rounded-xl border transition-all duration-200 ${
                   historyIndex >= history.length - 1
                     ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
-                    : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                    : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
                 }`}
                 title="Redo (Ctrl/Cmd+Y)"
               >
@@ -296,10 +296,10 @@ export default function Whiteboard() {
 
             <button
               onClick={() => setErasing((v) => !v)}
-              className={`px-4 py-2 rounded-lg border transition-colors ${
+              className={`px-5 py-2 rounded-xl border transition-all duration-200 ${
                 erasing 
-                  ? "bg-red-500 text-white border-red-500 shadow-sm" 
-                  : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                  ? "bg-gray-800 text-white border-gray-800 shadow-sm" 
+                  : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
               }`}
               title="Toggle Eraser (draw with transparency)"
             >
@@ -308,14 +308,14 @@ export default function Whiteboard() {
             
             <button 
               onClick={clear} 
-              className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+              className="px-5 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"
             >
               Clear
             </button>
             
             <button 
               onClick={exportPNG} 
-              className="px-4 py-2 rounded-lg border border-blue-500 bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+              className="px-5 py-2 rounded-xl border border-gray-800 bg-gray-800 text-white hover:bg-gray-900 transition-all duration-200"
             >
               Export PNG
             </button>
@@ -324,7 +324,7 @@ export default function Whiteboard() {
       </div>
 
       {/* Canvas container with enhanced styling */}
-      <div className="bg-white border-2 border-gray-200 rounded-xl shadow-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
         <div ref={containerRef} className="w-full">
           <Stage
             key="whiteboard-stage"
@@ -340,7 +340,7 @@ export default function Whiteboard() {
             style={{ 
               background: "#ffffff", 
               cursor: erasing ? "crosshair" : "url(''), crosshair",
-              borderRadius: "12px"
+              borderRadius: "16px"
             }}
           >
             <Layer>
