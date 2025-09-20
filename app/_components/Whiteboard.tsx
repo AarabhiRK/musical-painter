@@ -19,31 +19,74 @@ export default function Whiteboard() {
   const [convertedMusic, setConvertedMusic] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [beatovenStatus, setBeatovenStatus] = useState<string | null>(null);
+  const [beatovenTaskId, setBeatovenTaskId] = useState<string | null>(null);
+  const [promptPreview, setPromptPreview] = useState<string | null>(null);
+  const abortCtrlRef = useRef<AbortController | null>(null);
 
   // Export and analyze function
   const analyzeDrawing = async () => {
     setConvertedMusic(null);
     setError(null);
     setAnalyzing(true);
+    // abort any previous
+    if (abortCtrlRef.current) {
+      try { abortCtrlRef.current.abort(); } catch {}
+    }
+    const ac = new AbortController();
+    abortCtrlRef.current = ac;
     try {
       if (!stageRef.current) throw new Error('No drawing to analyze.');
       const uri = stageRef.current.toDataURL({ pixelRatio: 2 });
       const base64 = uri.replace(/^data:image\/png;base64,/, "");
-      const res = await fetch("/api/gemini", {
+      // call the new generate-music route which returns { prompt, task_id, trackUrl, beatovenMeta, geminiRaw }
+      const res = await fetch("/api/generate-music", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64 })
+        body: JSON.stringify({ imageBase64: base64 }),
+        signal: ac.signal,
       });
       const data = await res.json();
-      // Gemini API returns candidates[0].content.parts[0].text
-      const summary = data?.candidates?.[0]?.content?.parts?.[0]?.text || data?.error || 'No summary returned.';
-      setConvertedMusic(summary);
+      // Expected shape: { prompt, task_id, trackUrl, beatovenMeta, geminiRaw }
+      if (data?.trackUrl) {
+        setConvertedMusic(data.trackUrl);
+        setBeatovenStatus(data?.beatovenMeta?.status || 'composed');
+        setBeatovenTaskId(data?.task_id || null);
+        setPromptPreview(data?.prompt ? JSON.stringify(data.prompt, null, 2) : null);
+      } else if (data?.prompt) {
+        // If Gemini returned a prompt but Beatoven hasn't completed (or server returned only prompt), show it
+        setPromptPreview(JSON.stringify(data.prompt, null, 2));
+        setConvertedMusic(null);
+        setBeatovenTaskId(data?.task_id || null);
+        setBeatovenStatus(data?.beatovenMeta?.status || null);
+      } else if (data?.geminiRaw) {
+        // fallback: show raw model output for debugging
+        setPromptPreview(data.geminiRaw);
+        setConvertedMusic(null);
+      } else if (data?.error) {
+        setError(data.error);
+      } else {
+        setError('No usable response from server');
+      }
     } catch (e: any) {
-      setError(e.message || 'Failed to analyze.');
+      if (e.name === 'AbortError') {
+        setError('Analysis cancelled');
+      } else {
+        setError(e.message || 'Failed to analyze.');
+      }
     } finally {
       setAnalyzing(false);
+      abortCtrlRef.current = null;
     }
   };
+
+  const cancelAnalyze = useCallback(() => {
+    if (abortCtrlRef.current) {
+      try { abortCtrlRef.current.abort(); } catch {};
+      setAnalyzing(false);
+      setBeatovenStatus('cancelled');
+    }
+  }, []);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [current, setCurrent] = useState<Stroke | null>(null);
   const [color, setColor] = useState("#2563eb");
@@ -574,15 +617,53 @@ export default function Whiteboard() {
         >
           {analyzing ? 'Analyzing...' : 'Analyze Drawing'}
         </button>
+            {analyzing && (
+              <div className="flex items-center gap-2">
+                <svg className="animate-spin h-5 w-5 text-blue-600" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
+                <button
+                  onClick={cancelAnalyze}
+                  className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-sm"
+                >Cancel</button>
+              </div>
+            )}
         <p className="mt-3 max-w-xl text-sm text-gray-600 text-center">
           Convert this drawing into a short musical interpretation, a way to represent your visual art into a musical
           piece (works for scenes, patterns, and realistic drawings alike).
         </p>
         <p className="mt-2 max-w-xl text-xs text-gray-500 italic text-center"></p>
-    {convertedMusic && (
+        {convertedMusic && (
           <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl text-center">
-      <strong>Converted Music:</strong>
-      <div className="mt-2 whitespace-pre-line">{convertedMusic}</div>
+            <strong>Converted Music:</strong>
+            <div className="mt-4">
+              {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
+                <audio controls src={convertedMusic} className="w-full" />
+              ) : (
+                <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
+              )}
+            </div>
+          </div>
+        )}
+        {beatovenStatus && (
+          <div className="mt-4 text-sm text-gray-700">
+            <div><strong>Status:</strong> {beatovenStatus}</div>
+            {beatovenTaskId && (
+              <div className="mt-2">
+                <span className="text-xs text-gray-500">Task ID:</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <code className="break-all bg-white p-2 rounded text-xs">{beatovenTaskId}</code>
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(beatovenTaskId)}
+                    className="px-2 py-1 text-xs bg-blue-600 text-white rounded"
+                  >Copy</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {promptPreview && (
+          <div className="mt-4 w-full max-w-xl text-left">
+            <div className="text-xs text-gray-600 mb-1">Prompt sent to composer:</div>
+            <pre className="bg-white p-3 rounded text-sm text-gray-800 whitespace-pre-wrap">{promptPreview}</pre>
           </div>
         )}
         {error && (
