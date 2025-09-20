@@ -18,17 +18,56 @@ export default function Whiteboard() {
   // Converted music analysis state
   const [convertedMusic, setConvertedMusic] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [stage, setStage] = useState<'idle'|'analyzing'|'composing'|'done'|'cancelled'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [beatovenStatus, setBeatovenStatus] = useState<string | null>(null);
   const [beatovenTaskId, setBeatovenTaskId] = useState<string | null>(null);
-  const [promptPreview, setPromptPreview] = useState<string | null>(null);
+  // promptPreview is intentionally not surfaced in UI; server logs to data/runs.json
   const abortCtrlRef = useRef<AbortController | null>(null);
+
+  // Audio player state
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Brush palettes
+  const palettes: Record<string, string[]> = {
+    Default: ["#2563eb", "#ef4444", "#10b981", "#f59e0b", "#7c3aed", "#111827"],
+    Cinematic: ["#0f172a", "#1f2937", "#4b5563", "#ef4444", "#f97316", "#fbbf24"],
+    Pastel: ["#ffd7e2", "#ffefc2", "#d9f7be", "#dbeafe", "#f3e8ff", "#ffedd5"],
+    // 'Custom' is represented by userSwatches state
+  };
+  const [selectedPalette, setSelectedPalette] = useState<string>('Default');
+  // User-custom swatches (up to 7) persisted to localStorage
+  const [userSwatches, setUserSwatches] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('userSwatches');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setUserSwatches(parsed.slice(0, 7));
+      } else {
+        // default starter swatches
+        setUserSwatches(["#7dd3fc","#60a5fa","#a78bfa"]);
+      }
+    } catch (e) {
+      setUserSwatches(["#7dd3fc","#60a5fa","#a78bfa"]);
+    }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('userSwatches', JSON.stringify(userSwatches.slice(0,7))); } catch (e) {}
+  }, [userSwatches]);
+
+  // Small helper to get current palette swatches
+  const activeSwatches = selectedPalette === 'Custom' ? userSwatches : palettes[selectedPalette] || [];
 
   // Export and analyze function
   const analyzeDrawing = async () => {
     setConvertedMusic(null);
     setError(null);
-    setAnalyzing(true);
+  setAnalyzing(true);
+  setStage('analyzing');
     // abort any previous
     if (abortCtrlRef.current) {
       try { abortCtrlRef.current.abort(); } catch {}
@@ -52,16 +91,16 @@ export default function Whiteboard() {
         setConvertedMusic(data.trackUrl);
         setBeatovenStatus(data?.beatovenMeta?.status || 'composed');
         setBeatovenTaskId(data?.task_id || null);
-        setPromptPreview(data?.prompt ? JSON.stringify(data.prompt, null, 2) : null);
+        // do not surface prompt/task to UI; server logs runs to data/runs.json
+        setStage('done');
       } else if (data?.prompt) {
-        // If Gemini returned a prompt but Beatoven hasn't completed (or server returned only prompt), show it
-        setPromptPreview(JSON.stringify(data.prompt, null, 2));
+        // Server returned a parsed prompt but no final track yet - switch to composing state silently
         setConvertedMusic(null);
         setBeatovenTaskId(data?.task_id || null);
         setBeatovenStatus(data?.beatovenMeta?.status || null);
+        setStage('composing');
       } else if (data?.geminiRaw) {
-        // fallback: show raw model output for debugging
-        setPromptPreview(data.geminiRaw);
+        // fallback: keep raw for debugging but don't show by default
         setConvertedMusic(null);
       } else if (data?.error) {
         setError(data.error);
@@ -71,6 +110,7 @@ export default function Whiteboard() {
     } catch (e: any) {
       if (e.name === 'AbortError') {
         setError('Analysis cancelled');
+        setStage('cancelled');
       } else {
         setError(e.message || 'Failed to analyze.');
       }
@@ -85,8 +125,59 @@ export default function Whiteboard() {
       try { abortCtrlRef.current.abort(); } catch {};
       setAnalyzing(false);
       setBeatovenStatus('cancelled');
+  setStage('cancelled');
     }
   }, []);
+
+  // Audio control functions
+  const togglePlayPause = useCallback(() => {
+    if (!audioRef.current) return;
+    
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play();
+      setIsPlaying(true);
+    }
+  }, [isPlaying]);
+
+  const handleTimeUpdate = useCallback(() => {
+    if (!audioRef.current || isDragging) return;
+    setCurrentTime(audioRef.current.currentTime);
+  }, [isDragging]);
+
+  const handleLoadedMetadata = useCallback(() => {
+    if (!audioRef.current) return;
+    setDuration(audioRef.current.duration);
+  }, []);
+
+  const handleSeek = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || !duration) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = percentage * duration;
+    
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+  }, [duration]);
+
+  const handleMouseDown = useCallback(() => {
+    setIsDragging(true);
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  const formatTime = useCallback((time: number) => {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }, []);
+
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [current, setCurrent] = useState<Stroke | null>(null);
   const [color, setColor] = useState("#2563eb");
@@ -473,19 +564,100 @@ export default function Whiteboard() {
 
   return (
     <div className="w-full max-w-7xl mx-auto">
+      <style>{`
+        @keyframes pulse-slower { 0% { transform: scale(1); opacity: 1 } 50% { transform: scale(1.05); opacity: 0.9 } 100% { transform: scale(1); opacity: 1 } }
+        .animate-pulse-slower { animation: pulse-slower 2.8s ease-in-out infinite; }
+        @keyframes spin-slow { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }
+        .animate-spin-slow { animation: spin-slow 3s linear infinite; }
+        @keyframes loading-bar { 0% { transform: translateX(-100%);} 50% { transform: translateX(-20%);} 100% { transform: translateX(100%);} }
+        .animate-loading-bar { animation: loading-bar 2.2s linear infinite; }
+        .animate-loading-bar-slow { animation: loading-bar 4s linear infinite; }
+      `}</style>
       {/* Toolbar */}
       <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-8 shadow-sm">
         <div className="flex flex-wrap items-center gap-6">
           <div className="flex items-center gap-4">
-            <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
-              <span className="text-gray-600">Color</span>
-              <input 
-                type="color" 
-                value={color} 
-                onChange={(e) => setColor(e.target.value)}
-                className="w-10 h-10 rounded-xl border-2 border-gray-200 cursor-pointer hover:border-gray-300 transition-colors"
-              />
-            </label>
+            <div className="flex flex-col">
+              <label className="flex items-center gap-3 text-sm font-medium text-gray-700">
+                <span className="text-gray-600">Color</span>
+                <input 
+                  type="color" 
+                  value={color} 
+                  onChange={(e) => setColor(e.target.value)}
+                  className="w-10 h-10 rounded-xl border-2 border-gray-200 cursor-pointer hover:border-gray-300 transition-colors"
+                />
+              </label>
+              <div className="mt-2 flex items-center gap-2">
+                <select
+                  value={selectedPalette}
+                  onChange={(e) => setSelectedPalette(e.target.value)}
+                  className="text-xs rounded-md border px-2 py-1"
+                >
+                  {Object.keys(palettes).concat(['Custom']).map((k) => (
+                    <option key={k} value={k}>{k}</option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-2">
+                  {/* Non-custom palettes: simple swatch buttons */}
+                  {selectedPalette !== 'Custom' && activeSwatches.map((c, i) => (
+                    <button
+                      key={`${c}-${i}`}
+                      onClick={() => setColor(c)}
+                      aria-label={`Select color ${c}`}
+                      style={{ background: c }}
+                      className="w-6 h-6 rounded-md border border-gray-200"
+                    />
+                  ))}
+
+                  {/* Custom palette: show editable color inputs inline (single row) */}
+                  {selectedPalette === 'Custom' && (
+                    <>
+                      {userSwatches.map((c, i) => (
+                        <div key={i} className="flex items-center gap-1">
+                          <input
+                            type="color"
+                            value={c}
+                            onChange={(e) => {
+                              const copy = [...userSwatches];
+                              copy[i] = e.target.value;
+                              setUserSwatches(copy.slice(0, 7));
+                              // immediately set brush color to the chosen value
+                              setColor(e.target.value);
+                            }}
+                            onMouseDown={() => setColor(c)}
+                            className="w-6 h-6 p-0 border rounded-md cursor-pointer"
+                            title={`Swatch ${i + 1}`}
+                          />
+                          <button
+                            onClick={() => setUserSwatches(userSwatches.filter((_, idx) => idx !== i))}
+                            className="text-xs text-red-500"
+                            aria-label={`Remove swatch ${i + 1}`}
+                          >
+                            x
+                          </button>
+                        </div>
+                      ))}
+
+                      <button
+                        onClick={() => {
+                          if (userSwatches.length >= 7) return;
+                          const next = [...userSwatches, '#ffffff'].slice(0, 7);
+                          setUserSwatches(next);
+                          // select the newly added swatch as brush color
+                          setColor('#ffffff');
+                        }}
+                        disabled={userSwatches.length >= 7}
+                        className={`w-6 h-6 rounded-md border border-dashed flex items-center justify-center text-xs ${userSwatches.length >= 7 ? 'text-gray-300 border-gray-100 cursor-not-allowed bg-gray-50' : 'text-gray-500'}`}
+                        title="Add swatch (max 7)"
+                      >
+                        +
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {/* custom swatches are rendered inline above; no duplicate inputs here */}
+            </div>
           </div>
           
           <div className="flex items-center gap-4">
@@ -608,69 +780,214 @@ export default function Whiteboard() {
           </Stage>
         </div>
       </div>
-      {/* Analyze Drawing Button & Result */}
+      {/* Loading overlay with animated visuals during analyzing/composing */}
+      {(stage === 'analyzing' || stage === 'composing') && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center pointer-events-none">
+          <div className="pointer-events-auto bg-white/90 dark:bg-black/80 rounded-2xl p-8 shadow-xl flex items-center gap-6 w-[min(760px,calc(100%-48px))]">
+            <div className="w-24 h-24 flex items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 animate-pulse-slower">
+              <svg className="h-12 w-12 text-white animate-spin-slow" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-gray-800">{stage === 'analyzing' ? 'Analyzing drawing' : 'Composing music'}</div>
+              <div className="mt-2 text-xs text-gray-600">This may take up to a minute. We&apos;re generating a musical composition that matches your drawing.</div>
+              <div className="mt-4 w-full bg-gray-100 h-2 rounded overflow-hidden">
+                <div className={`h-2 bg-gradient-to-r from-blue-500 to-indigo-500 ${stage === 'composing' ? 'animate-loading-bar' : 'animate-loading-bar-slow'}`} style={{ width: stage === 'composing' ? '60%' : '30%' }} />
+              </div>
+            </div>
+            <div>
+              <button onClick={cancelAnalyze} className="px-4 py-2 rounded-lg bg-white border">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Music Generation Button & Result */}
       <div className="mt-8 flex flex-col items-center">
         <button
           onClick={analyzeDrawing}
           disabled={analyzing}
           className="px-6 py-3 rounded-xl border border-blue-700 bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
         >
-          {analyzing ? 'Analyzing...' : 'Analyze Drawing'}
+          {analyzing ? 'Analyzing...' : 'Generate Music from Drawing'}
         </button>
-            {analyzing && (
-              <div className="flex items-center gap-2">
-                <svg className="animate-spin h-5 w-5 text-blue-600" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
-                <button
-                  onClick={cancelAnalyze}
-                  className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-sm"
-                >Cancel</button>
-              </div>
-            )}
         <p className="mt-3 max-w-xl text-sm text-gray-600 text-center">
           Convert this drawing into a short musical interpretation, a way to represent your visual art into a musical
           piece (works for scenes, patterns, and realistic drawings alike).
         </p>
         <p className="mt-2 max-w-xl text-xs text-gray-500 italic text-center"></p>
         {convertedMusic && (
-          <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl text-center">
-            <strong>Converted Music:</strong>
+          <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+              <strong className="text-lg">Generated Music</strong>
+            </div>
             <div className="mt-4">
               {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
-                <audio controls src={convertedMusic} className="w-full" />
+                <div className="bg-white rounded-lg p-4 shadow-sm">
+                  {/* Hidden audio element for actual playback */}
+                  <audio
+                    ref={audioRef}
+                    src={convertedMusic}
+                    onTimeUpdate={handleTimeUpdate}
+                    onLoadedMetadata={handleLoadedMetadata}
+                    onEnded={() => setIsPlaying(false)}
+                    className="hidden"
+                  />
+                  
+                  {/* Custom Audio Player */}
+                  <div className="space-y-4">
+                    {/* Play/Pause Button */}
+                    <div className="flex justify-center">
+                      <button
+                        onClick={togglePlayPause}
+                        className="w-16 h-16 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center text-white shadow-lg transition-all duration-200 hover:scale-105"
+                      >
+                        {isPlaying ? (
+                          <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                          </svg>
+                        ) : (
+                          <svg className="w-6 h-6 ml-1" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="space-y-2">
+                      <div
+                        className="w-full h-2 bg-gray-200 rounded-full cursor-pointer hover:h-3 transition-all duration-200"
+                        onClick={handleSeek}
+                        onMouseDown={handleMouseDown}
+                        onMouseUp={handleMouseUp}
+                      >
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-200 hover:from-blue-600 hover:to-indigo-700"
+                          style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+                        >
+                          <div className="w-4 h-4 bg-white rounded-full shadow-md float-right -mt-1 -mr-2 hover:scale-110 transition-transform duration-200"></div>
+                        </div>
+                      </div>
+                      
+                      {/* Time Display */}
+                      <div className="flex justify-between text-sm text-gray-600">
+                        <span>{formatTime(currentTime)}</span>
+                        <span>{formatTime(duration)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               ) : (
                 <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
               )}
             </div>
           </div>
         )}
-        {beatovenStatus && (
-          <div className="mt-4 text-sm text-gray-700">
-            <div><strong>Status:</strong> {beatovenStatus}</div>
-            {beatovenTaskId && (
-              <div className="mt-2">
-                <span className="text-xs text-gray-500">Task ID:</span>
-                <div className="flex items-center gap-2 mt-1">
-                  <code className="break-all bg-white p-2 rounded text-xs">{beatovenTaskId}</code>
-                  <button
-                    onClick={() => navigator.clipboard?.writeText(beatovenTaskId)}
-                    className="px-2 py-1 text-xs bg-blue-600 text-white rounded"
-                  >Copy</button>
-                </div>
+      </div>
+      
+      {/* Progressive Compositing Stepper */}
+      <div className="mt-8 w-full max-w-3xl mx-auto">
+        <div className="flex items-center justify-between gap-4">
+          {/* Stepper */}
+          <div className="flex-1">
+            <div className="flex items-center justify-between gap-4">
+              {[
+                { id: 'analyze', label: 'Analyze' },
+                { id: 'compose', label: 'Compose' },
+                { id: 'done', label: 'Done' },
+              ].map((step, idx) => {
+                const active = (
+                  (stage === 'analyzing' && step.id === 'analyze') ||
+                  (stage === 'composing' && step.id === 'compose') ||
+                  (stage === 'done' && step.id === 'done')
+                );
+                const completed = (() => {
+                  if (stage === 'done') return true;
+                  if (stage === 'composing') return step.id === 'analyze';
+                  return false;
+                })();
+                return (
+                  <div key={step.id} className="flex-1 flex items-center gap-3">
+                    <div className={`w-10 h-10 flex items-center justify-center rounded-full ${completed ? 'bg-blue-600 text-white' : active ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {active && stage !== 'done' ? (
+                        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
+                      ) : completed ? (
+                        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
+                      ) : (
+                        <span className="text-sm font-medium">{idx + 1}</span>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <div className={`text-sm font-semibold ${completed ? 'text-gray-800' : active ? 'text-blue-700' : 'text-gray-500'}`}>{step.label}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-3">
+            {stage !== 'analyzing' && stage !== 'composing' && (
+              <button
+                onClick={() => {
+                  analyzeDrawing();
+                }}
+                className="px-6 py-3 rounded-xl border border-blue-700 bg-blue-700 text-white font-semibold shadow hover:bg-blue-800 transition-all"
+              >
+                {stage === 'idle' ? 'Start' : stage === 'done' ? 'Analyze Again' : 'Analyze'}
+              </button>
+            )}
+
+            {(stage === 'analyzing' || stage === 'composing') && (
+              <div className="flex items-center gap-2">
+                <svg className="animate-spin h-5 w-5 text-blue-600" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
+                <button onClick={cancelAnalyze} className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-sm">Cancel</button>
               </div>
             )}
           </div>
-        )}
-        {promptPreview && (
-          <div className="mt-4 w-full max-w-xl text-left">
-            <div className="text-xs text-gray-600 mb-1">Prompt sent to composer:</div>
-            <pre className="bg-white p-3 rounded text-sm text-gray-800 whitespace-pre-wrap">{promptPreview}</pre>
-          </div>
-        )}
-        {error && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 max-w-xl text-center">
-            {error}
-          </div>
-        )}
+        </div>
+
+        <div className="mt-6">
+          <p className="text-sm text-gray-600">Convert your drawing into a musical piece — compose high-quality music from your drawing.</p>
+        </div>
+
+        {/* Results area */}
+        <div className="mt-6">
+          {stage === 'done' && convertedMusic && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-900">
+              <strong>Converted Music:</strong>
+              <div className="mt-4">
+                {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
+                  <div className="w-full">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          if (!audioRef.current) return;
+                          if (isPlaying) { audioRef.current.pause(); setIsPlaying(false); }
+                          else { audioRef.current.play(); setIsPlaying(true); }
+                        }}
+                        className="px-3 py-2 rounded-md bg-white border"
+                      >{isPlaying ? 'Pause' : 'Play'}</button>
+                      <div className="flex-1 bg-gray-200 h-3 rounded overflow-hidden">
+                        <div style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} className="h-3 bg-blue-600" />
+                      </div>
+                    </div>
+                    <audio ref={audioRef} src={convertedMusic} className="hidden" />
+                  </div>
+                ) : (
+                  <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
+                )}
+              </div>
+            </div>
+          )}
+          {error && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700">
+              {error}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
