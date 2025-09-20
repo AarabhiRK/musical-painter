@@ -179,44 +179,101 @@ export default function Whiteboard() {
     const ac = new AbortController();
     abortCtrlRef.current = ac;
     try {
-      if (!stageRef.current) throw new Error('No drawing to analyze.');
-      const uri = stageRef.current.toDataURL({ pixelRatio: 2 });
-      const base64 = uri.replace(/^data:image\/png;base64,/, "");
-      // call the new generate-music route which returns { prompt, task_id, trackUrl, beatovenMeta, geminiRaw }
-      const res = await fetch("/api/generate-music", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64 }),
+      // Render each board to image dataURL (uses stageRef for active board only). We'll create temporary canvases for other boards.
+      const boardsPayload: Array<{ id: string; name?: string; imageBase64?: string; strokeCount?: number }> = [];
+
+      // Helper to render a board: if it's the active board, use stageRef; otherwise create a temporary canvas and draw strokes/background
+      const renderBoardToDataUrl = async (board: any) => {
+        if (board.id === activeBoardId && stageRef.current) {
+          const uri = stageRef.current.toDataURL({ pixelRatio: 2, mimeType: 'image/png' });
+          return uri.replace(/^data:image\/png;base64,/, '');
+        }
+
+        // Create an offscreen canvas and try to draw board background + strokes similar to generateBoardThumbnail but larger
+        const canvas = document.createElement('canvas');
+        const w = Math.max(640, size.w);
+        const h = Math.max(400, size.h);
+        canvas.width = w * 2; // hi-res
+        canvas.height = h * 2;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        // White background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw background image if available
+        if (board.backgroundImage) {
+          const img = new Image();
+          img.src = board.backgroundImage;
+          await new Promise<void>((res) => { img.onload = () => res(); img.onerror = () => res(); });
+          const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+          const dw = img.width * scale;
+          const dh = img.height * scale;
+          ctx.drawImage(img, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+        }
+
+        // Draw strokes scaled to canvas
+        const strokes = board.strokes || [];
+        strokes.forEach((s: any) => {
+          if (!s || !s.points || s.points.length < 4) return;
+          ctx.strokeStyle = s.color || '#000';
+          ctx.lineWidth = (s.width || 4) * 2;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.globalAlpha = s.opacity || 1;
+          ctx.beginPath();
+          const scaleX = (canvas.width / size.w) || 1;
+          const scaleY = (canvas.height / size.h) || 1;
+          ctx.moveTo(s.points[0] * scaleX, s.points[1] * scaleY);
+          for (let i = 2; i < s.points.length; i += 2) {
+            ctx.lineTo(s.points[i] * scaleX, s.points[i + 1] * scaleY);
+          }
+          ctx.stroke();
+        });
+
+        return canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+      };
+
+      // Build payload for all boards
+      for (const board of boards) {
+        try {
+          const base64 = await renderBoardToDataUrl(board);
+          boardsPayload.push({ id: board.id, name: board.name, imageBase64: base64, strokeCount: (board.strokes || []).length });
+        } catch (e) {
+          boardsPayload.push({ id: board.id, name: board.name, imageBase64: undefined, strokeCount: (board.strokes || []).length });
+        }
+      }
+
+      const res = await fetch('/api/generate-music', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ boards: boardsPayload, totalDuration: 60 }),
         signal: ac.signal,
       });
+
       const data = await res.json();
-      // Expected shape: { prompt, task_id, trackUrl, beatovenMeta, geminiRaw }
+
       if (data?.trackUrl) {
-        // Update the active board directly
-        setBoards(prevBoards => 
-          prevBoards.map(board => 
-            board.id === activeBoardId 
-              ? { ...board, convertedMusic: data.trackUrl }
-              : board
-          )
-        );
+        // Attach trackUrl to all valid boards returned in perBoardResults
+        const validIds = (data.perBoardResults || []).filter((r: any) => !r.error).map((r: any) => r.id);
+        setBoards(prevBoards => prevBoards.map(board => {
+          if (validIds.includes(board.id)) return { ...board, convertedMusic: data.trackUrl };
+          return board;
+        }));
         setBeatovenStatus(data?.beatovenMeta?.status || 'composed');
         setBeatovenTaskId(data?.task_id || null);
-        // do not surface prompt/task to UI; server logs runs to data/runs.json
         setStage('done');
-      } else if (data?.prompt) {
-        // Server returned a parsed prompt but no final track yet - switch to composing state silently
+      } else if (data?.task_id) {
         setBeatovenTaskId(data?.task_id || null);
         setBeatovenStatus(data?.beatovenMeta?.status || null);
         setStage('composing');
-      } else if (data?.geminiRaw) {
-        // fallback: keep raw for debugging but don't show by default
-        // No need to update board since convertedMusic is already null
       } else if (data?.error) {
-        setError(data.error);
+        setError(data.error || 'Server error');
       } else {
         setError('No usable response from server');
       }
+
     } catch (e: any) {
       if (e.name === 'AbortError') {
         setError('Analysis cancelled');
