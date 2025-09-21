@@ -8,13 +8,127 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const boards: Array<{ id: string; name?: string; imageBase64?: string; strokeCount?: number }> = body?.boards || [];
     const totalDuration: number = typeof body?.totalDuration === 'number' ? body.totalDuration : 60;
-
-    if (!boards.length) return NextResponse.json({ error: 'No boards provided' }, { status: 400 });
+    const retryMode = body?.retryMode === true;
+    const adjustMode = body?.adjustMode === true;
+    const beatovenPrompt = body?.beatovenPrompt;
+    const adjustInstructions = body?.adjustInstructions;
 
     const geminiKey = process.env.GEMINI_API_KEY;
     const beatovenKey = process.env.BEATOVEN_API_KEY;
     const beatovenBase = process.env.BEATOVEN_BASE_URL || 'https://public-api.beatoven.ai';
     if (!geminiKey || !beatovenKey) return NextResponse.json({ error: 'API keys not set' }, { status: 500 });
+
+    // Handle retry mode - use existing prompt directly
+    if (retryMode && beatovenPrompt) {
+      const composeRes = await fetch(`${beatovenBase.replace(/\/$/, '')}/api/v1/tracks/compose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${beatovenKey}` },
+        body: JSON.stringify({ prompt: { text: beatovenPrompt }, format: 'mp3', looping: false }),
+      });
+      const composeJson = await composeRes.json();
+      const taskId = composeJson?.task_id;
+      if (!taskId) return NextResponse.json({ error: 'No task_id returned', composeJson }, { status: 500 });
+
+      // Poll for completion
+      let attempts = 0;
+      let finalMeta: any = null;
+      while (attempts++ < 90) {
+        try {
+          const stRes = await fetch(`${beatovenBase.replace(/\/$/, '')}/api/v1/tasks/${encodeURIComponent(taskId)}`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${beatovenKey}` },
+          });
+          if (stRes.ok) {
+            const stJson = await stRes.json();
+            const status = stJson?.status;
+            if (status === 'composed') { finalMeta = stJson?.meta || stJson; break; }
+            if (status === 'failed' || status === 'error') return NextResponse.json({ beatoven: stJson, error: 'Beatoven composition failed' }, { status: 500 });
+          }
+        } catch {}
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      if (!finalMeta) return NextResponse.json({ task_id: taskId, status: 'timed_out', error: 'Beatoven compose timed out' }, { status: 500 });
+
+      const trackUrl = finalMeta.track_url || finalMeta.trackUrl || finalMeta.track?.downloadUrl || finalMeta.track?.url || null;
+      return NextResponse.json({ beatovenPrompt, task_id: taskId, trackUrl, beatovenMeta: finalMeta });
+    }
+
+    // Handle adjust mode - modify existing prompt
+    if (adjustMode && beatovenPrompt && adjustInstructions) {
+      const adjustPrompt = `You are a music supervisor. Modify this existing Beatoven prompt based on the user's adjustment instructions.
+
+ORIGINAL PROMPT:
+${beatovenPrompt}
+
+USER ADJUSTMENT REQUEST:
+${adjustInstructions}
+
+INSTRUCTIONS:
+- Keep the core musical elements that work well
+- Apply the requested changes while maintaining Beatoven compatibility
+- Ensure the output is still a coherent musical prompt
+- Use natural language descriptions, not technical music notation
+- Maintain the same duration and overall structure
+
+OUTPUT:
+Provide the modified prompt ready for Beatoven, incorporating the requested changes.`;
+
+      const adjustRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: adjustPrompt }] }] }),
+      });
+
+      if (!adjustRes.ok) {
+        const errorText = await adjustRes.text();
+        return NextResponse.json({ error: `Adjustment failed: ${errorText}` }, { status: 500 });
+      }
+
+      const adjustData = await adjustRes.json();
+      const adjustedPrompt = extractTextFromGemini(adjustData).trim();
+
+      if (!adjustedPrompt) {
+        return NextResponse.json({ error: 'Failed to generate adjusted prompt' }, { status: 500 });
+      }
+
+      // Use the adjusted prompt with Beatoven
+      const composeRes = await fetch(`${beatovenBase.replace(/\/$/, '')}/api/v1/tracks/compose`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${beatovenKey}` },
+        body: JSON.stringify({ prompt: { text: adjustedPrompt }, format: 'mp3', looping: false }),
+      });
+      const composeJson = await composeRes.json();
+      const taskId = composeJson?.task_id;
+      if (!taskId) return NextResponse.json({ error: 'No task_id returned', composeJson }, { status: 500 });
+
+      // Poll for completion
+      let attempts = 0;
+      let finalMeta: any = null;
+      while (attempts++ < 90) {
+        try {
+          const stRes = await fetch(`${beatovenBase.replace(/\/$/, '')}/api/v1/tasks/${encodeURIComponent(taskId)}`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${beatovenKey}` },
+          });
+          if (stRes.ok) {
+            const stJson = await stRes.json();
+            const status = stJson?.status;
+            if (status === 'composed') { finalMeta = stJson?.meta || stJson; break; }
+            if (status === 'failed' || status === 'error') return NextResponse.json({ beatoven: stJson, error: 'Beatoven composition failed' }, { status: 500 });
+          }
+        } catch {}
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      if (!finalMeta) return NextResponse.json({ task_id: taskId, status: 'timed_out', error: 'Beatoven compose timed out' }, { status: 500 });
+
+      const trackUrl = finalMeta.track_url || finalMeta.trackUrl || finalMeta.track?.downloadUrl || finalMeta.track?.url || null;
+      return NextResponse.json({ beatovenPrompt: adjustedPrompt, task_id: taskId, trackUrl, beatovenMeta: finalMeta });
+    }
+
+    // Original flow for new generation
+    if (!boards.length) return NextResponse.json({ error: 'No boards provided' }, { status: 400 });
 
     // Filter valid boards: accept any board that either has an uploaded image or has >=5 stroke points
     const validBoards = boards.filter(b => (b.imageBase64 && b.imageBase64.length > 100) || (b.strokeCount || 0) >= 5);
