@@ -1772,20 +1772,18 @@ export default function Whiteboard() {
       {/* Loading overlay with animated visuals during analyzing/composing */}
       {(stage === 'analyzing' || stage === 'composing') && (
         <div className="fixed inset-0 z-40 flex items-center justify-center pointer-events-none">
-          <div className="pointer-events-auto bg-white/90 dark:bg-black/80 rounded-2xl p-8 shadow-xl flex items-center gap-6 w-[min(760px,calc(100%-48px))]">
+          <div className="pointer-events-auto bg-black/80 rounded-2xl p-8 shadow-xl flex items-center gap-6 w-[min(760px,calc(100%-48px))]">
             <div className="w-24 h-24 flex items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 animate-pulse-slower">
               <svg className="h-12 w-12 text-white animate-spin-slow" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
             </div>
             <div className="flex-1">
-              <div className="text-sm font-semibold text-gray-800">{stage === 'analyzing' ? 'Analyzing drawing' : 'Composing music'}</div>
-              <div className="mt-2 text-xs text-gray-600">This may take up to a minute. We&apos;re generating a musical composition that matches your drawing.</div>
-              <div className="mt-4 w-full bg-gray-100 h-2 rounded overflow-hidden">
-                <div className={`h-2 bg-gradient-to-r from-blue-500 to-indigo-500 ${stage === 'composing' ? 'animate-loading-bar' : 'animate-loading-bar-slow'}`} style={{ width: stage === 'composing' ? '60%' : '30%' }} />
+              <div className="text-sm font-semibold text-white">{stage === 'analyzing' ? 'Analyzing drawing' : 'Composing music'}</div>
+              <div className="mt-2 text-xs text-white/80">This may take up to a minute. We&apos;re generating a musical composition that matches your drawing.</div>
+              <div className="mt-4 w-full bg-white/10 h-2 rounded overflow-hidden">
+                <div className={`h-2 bg-gradient-to-r from-blue-400 to-indigo-400 ${stage === 'composing' ? 'animate-loading-bar' : 'animate-loading-bar-slow'}`} style={{ width: stage === 'composing' ? '60%' : '30%' }} />
               </div>
             </div>
-            <div>
-              <button onClick={cancelAnalyze} className="px-4 py-2 rounded-lg bg-white border">Cancel</button>
-            </div>
+            {/* Cancel exists outside this overlay already; remove internal cancel button */}
           </div>
         </div>
       )}
