@@ -148,6 +148,11 @@ export default function Whiteboard() {
   // promptPreview is intentionally not surfaced in UI; server logs to data/runs.json
   const abortCtrlRef = useRef<AbortController | null>(null);
 
+  // Try Again functionality state
+  const [showAdjustPopup, setShowAdjustPopup] = useState(false);
+  const [adjustInstructions, setAdjustInstructions] = useState('');
+  const [lastBeatovenPrompt, setLastBeatovenPrompt] = useState<string | null>(null);
+
   // Brush palettes
   const palettes: Record<string, string[]> = {
     Default: ["#2563eb", "#ef4444", "#10b981", "#f59e0b", "#7c3aed", "#111827"],
@@ -320,6 +325,7 @@ export default function Whiteboard() {
         }));
         setBeatovenStatus(data?.beatovenMeta?.status || 'composed');
         setBeatovenTaskId(data?.task_id || null);
+        setLastBeatovenPrompt(data?.beatovenPrompt || null); // Store the prompt for adjustments
         setStage('done');
       } else if (data?.task_id) {
         setBeatovenTaskId(data?.task_id || null);
@@ -353,6 +359,115 @@ export default function Whiteboard() {
     }
   }, []);
 
+  // Try Again functionality
+  const tryAgain = useCallback(async () => {
+    if (!lastBeatovenPrompt) {
+      // Fallback to full analysis if no previous prompt
+      await analyzeDrawing();
+      return;
+    }
+
+    // Clear current music and start composing with same prompt
+    setBoards(prevBoards => 
+      prevBoards.map(board => 
+        board.id === activeBoardId 
+          ? { ...board, convertedMusic: null }
+          : board
+      )
+    );
+    setError(null);
+    setAnalyzing(true);
+    setStage('composing');
+
+    try {
+      const res = await fetch('/api/generate-music', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          boards: [], // Empty boards array for retry
+          totalDuration: 60,
+          retryMode: true,
+          beatovenPrompt: lastBeatovenPrompt
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data?.trackUrl) {
+        setBoards(prevBoards => prevBoards.map(board => {
+          if (board.id === activeBoardId) return { ...board, convertedMusic: data.trackUrl };
+          return board;
+        }));
+        setBeatovenStatus(data?.beatovenMeta?.status || 'composed');
+        setBeatovenTaskId(data?.task_id || null);
+        setStage('done');
+      } else if (data?.error) {
+        setError(data.error || 'Retry failed');
+      } else {
+        setError('No usable response from server');
+      }
+    } catch (e: any) {
+      setError(e.message || 'Failed to retry music generation.');
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [lastBeatovenPrompt, activeBoardId, analyzeDrawing]);
+
+  const adjustMusic = useCallback(async () => {
+    if (!lastBeatovenPrompt || !adjustInstructions.trim()) {
+      setError('Please provide adjustment instructions');
+      return;
+    }
+
+    // Clear current music and start composing with modified prompt
+    setBoards(prevBoards => 
+      prevBoards.map(board => 
+        board.id === activeBoardId 
+          ? { ...board, convertedMusic: null }
+          : board
+      )
+    );
+    setError(null);
+    setAnalyzing(true);
+    setStage('composing');
+    setShowAdjustPopup(false);
+
+    try {
+      const res = await fetch('/api/generate-music', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          boards: [], // Empty boards array for adjustment
+          totalDuration: 60,
+          adjustMode: true,
+          beatovenPrompt: lastBeatovenPrompt,
+          adjustInstructions: adjustInstructions.trim()
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data?.trackUrl) {
+        setBoards(prevBoards => prevBoards.map(board => {
+          if (board.id === activeBoardId) return { ...board, convertedMusic: data.trackUrl };
+          return board;
+        }));
+        setBeatovenStatus(data?.beatovenMeta?.status || 'composed');
+        setBeatovenTaskId(data?.task_id || null);
+        setLastBeatovenPrompt(data?.beatovenPrompt || lastBeatovenPrompt);
+        setStage('done');
+      } else if (data?.error) {
+        setError(data.error || 'Adjustment failed');
+      } else {
+        setError('No usable response from server');
+      }
+    } catch (e: any) {
+      setError(e.message || 'Failed to adjust music generation.');
+    } finally {
+      setAnalyzing(false);
+      setAdjustInstructions('');
+    }
+  }, [lastBeatovenPrompt, adjustInstructions, activeBoardId]);
 
   // Drawing state - derived from active board
   const [current, setCurrent] = useState<Stroke | null>(null);
@@ -378,9 +493,28 @@ export default function Whiteboard() {
   const strokes = activeBoard?.strokes || [];
   const shapes = activeBoard?.shapes || [];
   
-  // Undo/Redo state management
-  const [history, setHistory] = useState<{strokes: Stroke[], shapes: Shape[]}[]>([{strokes: [], shapes: []}]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  // Undo/Redo state management - per board
+  const [boardHistories, setBoardHistories] = useState<Record<string, {strokes: Stroke[], shapes: Shape[]}[]>>({});
+  const [boardHistoryIndices, setBoardHistoryIndices] = useState<Record<string, number>>({});
+  
+  // Get current board's history
+  const currentHistory = boardHistories[activeBoardId] || [{strokes: [], shapes: []}];
+  const currentHistoryIndex = boardHistoryIndices[activeBoardId] || 0;
+
+  // Initialize history for boards that don't have it yet
+  useEffect(() => {
+    if (!boardHistories[activeBoardId]) {
+      const initialHistory = [{strokes: activeBoard?.strokes || [], shapes: activeBoard?.shapes || []}];
+      setBoardHistories(prev => ({
+        ...prev,
+        [activeBoardId]: initialHistory
+      }));
+      setBoardHistoryIndices(prev => ({
+        ...prev,
+        [activeBoardId]: 0
+      }));
+    }
+  }, [activeBoardId, activeBoard?.strokes, activeBoard?.shapes, boardHistories]);
 
   // Brush properties helper functions
   const getBrushProperties = (type: BrushType, baseWidth: number) => {
@@ -499,7 +633,7 @@ export default function Whiteboard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [historyIndex, history]);
+  }, [currentHistoryIndex, currentHistory]);
 
 
   // Cleanup Konva Stage on unmount
@@ -613,13 +747,21 @@ export default function Whiteboard() {
     }
   }, [toolMode, isDrawingShape, currentShape, current, strokes, shapes, activeBoardId]);
 
-  // Add to history
+  // Add to history - per board
   const addToHistory = useCallback((newState: {strokes: Stroke[], shapes: Shape[]}) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(newState);
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  }, [history, historyIndex]);
+    const boardHistory = currentHistory.slice(0, currentHistoryIndex + 1);
+    boardHistory.push(newState);
+    
+    setBoardHistories(prev => ({
+      ...prev,
+      [activeBoardId]: boardHistory
+    }));
+    
+    setBoardHistoryIndices(prev => ({
+      ...prev,
+      [activeBoardId]: boardHistory.length - 1
+    }));
+  }, [currentHistory, currentHistoryIndex, activeBoardId]);
 
   // Global mouse up listener to handle mouse release outside whiteboard
   useEffect(() => {
@@ -664,12 +806,16 @@ export default function Whiteboard() {
     return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
   }, [toolMode, isDrawingShape, currentShape, current, isMouseDown, strokes, shapes, activeBoardId, addToHistory]);
 
-  // Undo function
+  // Undo function - per board
   const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      const newState = history[newIndex];
-      setHistoryIndex(newIndex);
+    if (currentHistoryIndex > 0) {
+      const newIndex = currentHistoryIndex - 1;
+      const newState = currentHistory[newIndex];
+      
+      setBoardHistoryIndices(prev => ({
+        ...prev,
+        [activeBoardId]: newIndex
+      }));
       
       // Update the active board directly
       setBoards(prevBoards => 
@@ -680,14 +826,18 @@ export default function Whiteboard() {
         )
       );
     }
-  }, [historyIndex, history, activeBoardId]);
+  }, [currentHistoryIndex, currentHistory, activeBoardId]);
 
-  // Redo function
+  // Redo function - per board
   const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
-      const newState = history[newIndex];
-      setHistoryIndex(newIndex);
+    if (currentHistoryIndex < currentHistory.length - 1) {
+      const newIndex = currentHistoryIndex + 1;
+      const newState = currentHistory[newIndex];
+      
+      setBoardHistoryIndices(prev => ({
+        ...prev,
+        [activeBoardId]: newIndex
+      }));
       
       // Update the active board directly
       setBoards(prevBoards => 
@@ -698,7 +848,7 @@ export default function Whiteboard() {
         )
       );
     }
-  }, [historyIndex, history, activeBoardId]);
+  }, [currentHistoryIndex, currentHistory, activeBoardId]);
 
   const clear = useCallback(() => {
     // Update the active board directly
@@ -1555,9 +1705,9 @@ export default function Whiteboard() {
             <div className="flex items-center gap-2 border-r border-gray-200 pr-4 mr-2">
               <button
                 onClick={undo}
-                disabled={historyIndex <= 0}
+                disabled={currentHistoryIndex <= 0}
                 className={`px-4 py-2 rounded-xl border transition-all duration-200 ${
-                  historyIndex <= 0
+                  currentHistoryIndex <= 0
                     ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
                     : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
                 }`}
@@ -1567,9 +1717,9 @@ export default function Whiteboard() {
               </button>
               <button
                 onClick={redo}
-                disabled={historyIndex >= history.length - 1}
+                disabled={currentHistoryIndex >= currentHistory.length - 1}
                 className={`px-4 py-2 rounded-xl border transition-all duration-200 ${
-                  historyIndex >= history.length - 1
+                  currentHistoryIndex >= currentHistory.length - 1
                     ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
                     : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
                 }`}
@@ -1927,6 +2077,24 @@ export default function Whiteboard() {
                   )}
                 </div>
               </div>
+              
+              {/* Try Again Buttons */}
+              <div className="mt-4 flex gap-2 justify-center">
+                <button
+                  onClick={tryAgain}
+                  disabled={analyzing}
+                  className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors text-sm font-medium"
+                >
+                  Try Again
+                </button>
+                <button
+                  onClick={() => setShowAdjustPopup(true)}
+                  disabled={analyzing}
+                  className="px-4 py-2 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors text-sm font-medium"
+                >
+                  Adjust
+                </button>
+              </div>
             </div>
           )}
           </div>
@@ -1937,6 +2105,68 @@ export default function Whiteboard() {
           )}
         </div>
       </div>
+
+      {/* Adjust Popup Modal */}
+      {showAdjustPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl border border-gray-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Adjust Music</h3>
+              <button
+                onClick={() => {
+                  setShowAdjustPopup(false);
+                  setAdjustInstructions('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-gray-900 mb-2">
+                What would you like to change?
+              </label>
+              <textarea
+                value={adjustInstructions}
+                onChange={(e) => setAdjustInstructions(e.target.value)}
+                placeholder="e.g., Make it more upbeat, slower tempo, add piano, more cinematic, etc."
+                className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
+                rows={3}
+                maxLength={200}
+              />
+              <div className="text-xs text-gray-600 mt-1 font-medium">
+                {adjustInstructions.length}/200 characters
+              </div>
+            </div>
+            
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowAdjustPopup(false);
+                  setAdjustInstructions('');
+                }}
+                className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={adjustMusic}
+                disabled={!adjustInstructions.trim() || analyzing}
+                className={`px-4 py-2 rounded-lg transition-colors ${
+                  !adjustInstructions.trim() || analyzing
+                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+              >
+                {analyzing ? 'Adjusting...' : 'Apply Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
