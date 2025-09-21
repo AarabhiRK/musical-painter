@@ -145,11 +145,37 @@ Provide the modified prompt ready for Beatoven, incorporating the requested chan
 
     // 1️⃣ Generate per-board musical briefs (parallel processing)
     const processBoard = async (board: any, index: number): Promise<any> => {
-      const humanPrompt = `Analyze the image and write a natural-language prompt for Beatoven to generate music. Start exactly with:
+      const humanPrompt = `You are a professional music supervisor analyzing a drawing to create a musical prompt. Follow this analysis hierarchy:
+
+STEP 1 - IDENTIFY CONTENT TYPE:
+First, determine what type of drawing this is:
+- REPRESENTATIONAL: Contains recognizable objects, people, scenes, or landscapes
+- ABSTRACT: Contains shapes, patterns, or non-representational elements
+- MINIMAL: Very few strokes, mostly empty space, or extremely simple
+
+STEP 2 - CONTENT ANALYSIS (choose the most appropriate):
+
+If REPRESENTATIONAL (recognizable elements):
+- Identify specific objects, scenes, or subjects (e.g., "mountain landscape", "person's face", "city skyline")
+- Describe the mood and atmosphere these elements suggest
+- Choose genre based on content: cinematic orchestral for landscapes, ambient electronic for faces, acoustic folk for nature scenes
+
+If ABSTRACT (shapes/patterns but no clear objects):
+- Analyze the stroke patterns, shapes, and composition
+- Describe the energy and movement suggested by the forms
+- Choose genre based on patterns: ambient electronic for flowing shapes, cinematic orchestral for geometric forms, lo-fi hip hop for organic patterns
+
+If MINIMAL (very few strokes or mostly empty):
+- Focus primarily on color palette and overall mood
+- Use ethereal, ambient, or minimalist musical styles
+- Keep tempo slow (60-80 BPM) and texture sparse
+
+STEP 3 - MUSICAL TRANSLATION:
+Create a music prompt that matches your analysis. Start exactly with:
 "Background music:"
 
 Use **clear, evocative, descriptive language**. Describe:
-1. Overall theme and story of the image.
+1. Overall theme and story of the image (or mood if abstract/minimal).
 2. Mood and tempo using qualitative words (e.g., calm, playful, energetic, slow, uplifting).
 3. Genre/style: e.g., ambient, cinematic orchestral, lo-fi hip hop, synthwave.
 4. Instruments: describe textures and roles (e.g., "bright, melodic piano," "warm, resonant strings," "rhythmic offbeat guitar").
@@ -157,7 +183,7 @@ Use **clear, evocative, descriptive language**. Describe:
 6. Duration: ~${perBoardDuration} seconds.
 
 **Do NOT use BPM, key, or technical musical terms.**
-Keep output 30–100 words as a single paragraph. Only output the final prompt.`;
+Keep output 30–100 words as a single paragraph. Better to be simple and accurate than complex and wrong.`;
 
       try {
         const geminiRes = await fetch(
@@ -233,24 +259,6 @@ Beatoven is an AI music generation service that creates background music from te
 - Natural language descriptions rather than technical music notation
 
 Requirements:
-<<<<<<< HEAD
-- Preserve the chronological order of segments.
-- Ensure coherence across tempo, genre, and instrumentation.
-- Smooth transitions between segments (crossfade 1–3s, carry motifs forward).
-- Total track duration: ~${totalDuration}s.
-- Use Beatoven-friendly language (avoid complex music theory terms).
-
-Output format:
-REFINED_PROMPT:
-Write an 80–160 word natural-language brief ready for Beatoven. Include:
-1. Overall theme/message of the combined boards clearly and specifically based on drawing.
-2. Unified genre (use Beatoven-compatible genres like "cinematic orchestral", "ambient electronic", "acoustic folk").
-3. Mood progression across segments should also be somewhat unified but not necessarily the same as genre.
-4. Tempo/BPM and key (consistent or evolving if necessary).
-5. Core instruments and textures appearing across sections.
-6. Segment evolution: describe how energy builds/holds/releases across the whole track.
-7. Transition style (how one segment flows into the next).
-=======
 - Preserve chronological order of segments.
 - Ensure smooth transitions and coherence across mood, style, and instrumentation.
 - Describe overall mood, instrument textures, and how music evolves across the track.
@@ -265,7 +273,6 @@ Include:
 3. Core instruments and textures with adjectives.
 4. Segment evolution: how energy and emotion develop across the track.
 5. Natural transitions between segments.
->>>>>>> dda75c82bdccf4c4a8d6edc7303fc38f48f66daf
 
 SEGMENT_TIMINGS:
 One line per segment for reference only; musical description should remain in natural language form.`;
