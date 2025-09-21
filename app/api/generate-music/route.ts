@@ -22,17 +22,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No valid boards to analyze. Each board must have either an uploaded background image or at least 5 stroke points.' }, { status: 400 });
     }
 
-  // Limit to at most 4 boards for duration splits as requested; if more, keep first 4
-  const limitedBoards = validBoards.slice(0, Math.min(validBoards.length, 4));
+    // Limit to at most 4 boards for duration splits as requested; if more, keep first 4
+    const limitedBoards = validBoards.slice(0, Math.min(validBoards.length, 4));
 
     // Determine per-board duration
     const num = limitedBoards.length;
     const perBoardDuration = durationMap[num] || Math.max(15, Math.floor(totalDuration / num));
 
-    // 1️⃣ Generate per-board musical briefs
-    const perBoardResults: Array<any> = [];
-    for (let i = 0; i < limitedBoards.length; i++) {
-      const b = limitedBoards[i];
+    // 1️⃣ Generate per-board musical briefs (parallel processing)
+    const processBoard = async (board: any, index: number): Promise<any> => {
       const humanPrompt = `You are a professional music supervisor creating prompts for AI music generation based on the attached drawing.
 
 Analyze the image and write a natural-language prompt that can be directly used to generate music matching its theme, mood, and visuals. Start exactly with:
@@ -50,7 +48,6 @@ Include the following details naturally in the paragraph:
 9. Duration: ${perBoardDuration} seconds.
 
 Keep output 30–100 words, as a single natural paragraph. Only output the final prompt.`;
-;
 
       try {
         const geminiRes = await fetch(
@@ -58,22 +55,56 @@ Keep output 30–100 words, as a single natural paragraph. Only output the final
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: [{ parts: [{ text: humanPrompt }, { inlineData: { mimeType: 'image/png', data: b.imageBase64 } }] }] }),
+            body: JSON.stringify({ contents: [{ parts: [{ text: humanPrompt }, { inlineData: { mimeType: 'image/png', data: board.imageBase64 } }] }] }),
           }
         );
+
+        // Validate response status before parsing JSON
+        if (!geminiRes.ok) {
+          const errorText = await geminiRes.text();
+          throw new Error(`Gemini API error (${geminiRes.status}): ${errorText}`);
+        }
+
         const geminiData = await geminiRes.json();
+        
+        // Validate Gemini response structure
+        if (!geminiData || (!geminiData.candidates && !geminiData.output)) {
+          throw new Error('Invalid Gemini API response structure');
+        }
+
         const briefText = extractTextFromGemini(geminiData).trim();
-        perBoardResults.push({ id: b.id, name: b.name || `board-${i + 1}`, brief: briefText, raw: geminiData, strokeCount: b.strokeCount || 0, segment_duration: perBoardDuration });
+        
+        if (!briefText || briefText === '') {
+          throw new Error('Empty response from Gemini API');
+        }
+
+        return { 
+          id: board.id, 
+          name: board.name || `board-${index + 1}`, 
+          brief: briefText, 
+          raw: geminiData, 
+          strokeCount: board.strokeCount || 0, 
+          segment_duration: perBoardDuration 
+        };
       } catch (e: any) {
-        perBoardResults.push({ id: b.id, name: b.name || `board-${i + 1}`, error: e?.message || String(e) });
+        return { 
+          id: board.id, 
+          name: board.name || `board-${index + 1}`, 
+          error: e?.message || String(e) 
+        };
       }
-    }
+    };
+
+    // Process all boards in parallel
+    const perBoardResults: Array<any> = await Promise.all(
+      limitedBoards.map((board, index) => processBoard(board, index))
+    );
 
     // 2️⃣ Build combined prompt with smooth transitions
     const combinedSegmentsText = perBoardResults.map((r, idx) => `Segment ${idx + 1} (${r.name || r.id}): ${r.brief || r.raw} Duration: ${r.segment_duration}s.`).join('\n\n');
 
     const sharedHints = `
-Ensure coherence: align tempo, crossfade 1-3s, maintain sonic motifs, avoid abrupt changes. Output ~${totalDuration}s background music track of ordered segments suitable for scenes/looping.
+      Ensure coherence: align tempo, crossfade 1-3s, maintain sonic motifs, avoid abrupt changes. Output ~${totalDuration}s background music track of ordered segments suitable for scenes/looping.
     `;
 
     const combinedPrompt = `Compose a single ${totalDuration}-second track composed of ${num} ordered segments. ${sharedHints}\n\n${combinedSegmentsText}`;
@@ -81,8 +112,7 @@ Ensure coherence: align tempo, crossfade 1-3s, maintain sonic motifs, avoid abru
     // 3️⃣ Optional Gemini refiner for a polished prompt
     let refinedPrompt: string | null = null;
     try {
-      const refinerHuman = `
-You are a senior music supervisor. Combine the per-segment musical briefs into one unified prompt for Beatoven.
+      const refinerHuman = `You are a senior music supervisor. Combine the per-segment musical briefs into one unified prompt for Beatoven.
 
 Requirements:
 - Preserve the chronological order of segments.
@@ -102,6 +132,7 @@ Write an 80–160 word natural-language brief ready for Beatoven. Include:
 
 SEGMENT_TIMINGS:
 One line per segment in order, so that the music has transitions from board to board`;
+
       const refinerContents: any[] = [{ parts: [{ text: refinerHuman }] }];
       perBoardResults.forEach((r, idx) => refinerContents.push({ parts: [{ text: `Segment ${idx + 1} (${r.id || r.name}): ${r.brief || r.raw} Duration: ${r.segment_duration}s.` }] }));
 
@@ -110,9 +141,31 @@ One line per segment in order, so that the music has transitions from board to b
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: refinerContents }),
       });
-      const refText = extractTextFromGemini(await refRes.json()).trim();
+
+      // Validate refiner response status
+      if (!refRes.ok) {
+        const errorText = await refRes.text();
+        console.warn(`Gemini refiner API error (${refRes.status}): ${errorText}`);
+        throw new Error(`Refiner API error: ${refRes.status}`);
+      }
+
+      const refinerData = await refRes.json();
+      
+      // Validate refiner response structure
+      if (!refinerData || (!refinerData.candidates && !refinerData.output)) {
+        throw new Error('Invalid refiner API response structure');
+      }
+
+      const refText = extractTextFromGemini(refinerData).trim();
+      
+      if (!refText || refText === '') {
+        throw new Error('Empty response from refiner API');
+      }
+
       refinedPrompt = refText.match(/REFINED_PROMPT:\s*([\s\S]*)/i)?.[1].trim() || refText;
-    } catch {}
+    } catch (e: any) {
+      console.warn('Gemini refiner failed, using combined prompt:', e?.message || String(e));
+    }
     
     const promptToSend = refinedPrompt || combinedPrompt;
 
