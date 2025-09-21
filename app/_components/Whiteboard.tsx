@@ -26,7 +26,6 @@ type Shape = {
   width: number;
   opacity?: number;
   globalCompositeOperation?: "source-over" | "destination-out";
-  fill?: string | null;
 };
 
 export default function Whiteboard() {
@@ -314,7 +313,7 @@ export default function Whiteboard() {
   const [selectedShape, setSelectedShape] = useState<ShapeType>('rectangle');
   const [currentShape, setCurrentShape] = useState<Shape | null>(null);
   const [isDrawingShape, setIsDrawingShape] = useState(false);
-  const [fillMode, setFillMode] = useState(false);
+  
   
   const stageRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -901,18 +900,17 @@ export default function Whiteboard() {
       case 'rectangle':
         return (
           <Rect
-            key={key}
-            x={Math.min(startX, endX)}
-            y={Math.min(startY, endY)}
-            width={Math.abs(endX - startX)}
-            height={Math.abs(endY - startY)}
-            stroke={color}
-            fill={shape.fill || undefined}
-            strokeWidth={width}
-            opacity={opacity || 1}
-            globalCompositeOperation={globalCompositeOperation}
-            onClick={(e) => { if (typeof index === 'number') handleShapeClick(index, e); }}
-          />
+              key={key}
+              x={Math.min(startX, endX)}
+              y={Math.min(startY, endY)}
+              width={Math.abs(endX - startX)}
+              height={Math.abs(endY - startY)}
+              stroke={color}
+              strokeWidth={width}
+              opacity={opacity || 1}
+              globalCompositeOperation={globalCompositeOperation}
+              onClick={(e) => { if (typeof index === 'number') handleShapeClick(index, e); }}
+            />
         );
       case 'circle':
         // Calculate center and radius for corner-to-corner circle (like rectangle)
@@ -926,7 +924,6 @@ export default function Whiteboard() {
             y={centerY}
             radius={radius}
             stroke={color}
-            fill={shape.fill || undefined}
             strokeWidth={width}
             opacity={opacity || 1}
             globalCompositeOperation={globalCompositeOperation}
@@ -952,7 +949,6 @@ export default function Whiteboard() {
             key={key}
             points={[startX, endY, midX, startY, endX, endY, startX, endY]}
             stroke={color}
-            fill={shape.fill || undefined}
             strokeWidth={width}
             opacity={opacity || 1}
             globalCompositeOperation={globalCompositeOperation}
@@ -978,16 +974,7 @@ export default function Whiteboard() {
     const shape = shapes[index];
     if (!shape) return;
 
-    if (fillMode) {
-      // Toggle fill: if already same color, remove fill; otherwise set fill to current color
-      const newShapes = shapes.slice();
-      const existing = shape.fill || null;
-      const nextFill = existing === color ? null : color;
-      newShapes[index] = { ...shape, fill: nextFill };
-      setBoards(prev => prev.map(b => b.id === activeBoardId ? { ...b, shapes: newShapes } : b));
-      addToHistory({ strokes, shapes: newShapes });
-      return;
-    }
+    // No fill handling — shapes are not filled in this version
 
     // If erasing and toolMode is shape, delete the whole shape
     if (erasing && toolMode === 'shape') {
@@ -999,7 +986,7 @@ export default function Whiteboard() {
     }
 
     // otherwise, do nothing special
-  }, [shapes, fillMode, color, addToHistory, activeBoardId, erasing, toolMode, strokes]);
+  }, [shapes, color, addToHistory, activeBoardId, erasing, toolMode, strokes]);
 
   // Memoize stroke rendering for better performance
   const renderedStrokes = useMemo(() => {
@@ -1505,15 +1492,7 @@ export default function Whiteboard() {
                   <option value="triangle">Triangle</option>
                 </select>
               </label>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setFillMode(v => !v)}
-                  className={`px-4 py-2 rounded-xl border transition-all duration-200 ${fillMode ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300'}`}
-                  title="Fill shapes with the current color"
-                >
-                  {fillMode ? 'Fill: ON' : 'Fill: OFF'}
-                </button>
-              </div>
+              <div className="flex items-center gap-2"></div>
             </div>
           )}
 
