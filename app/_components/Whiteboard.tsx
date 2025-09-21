@@ -89,6 +89,60 @@ export default function Whiteboard() {
 
   // Get converted music directly from active board
   const convertedMusic = activeBoard?.convertedMusic || null;
+  // Download handler for the generated music
+  const baseFileName = (boardId?: string) => {
+    const id = boardId || activeBoard?.id || 'track';
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    return `sketch-music-${id}-${ts}.mp3`;
+  };
+
+  const dataUrlToBlob = (dataUrl: string) => {
+    const parts = dataUrl.split(',');
+    const meta = parts[0];
+    const isBase64 = /;base64$/.test(meta) || meta.includes(';base64');
+    const contentTypeMatch = meta.match(/:(.*?);/);
+    const contentType = contentTypeMatch ? contentTypeMatch[1] : 'audio/mpeg';
+    const raw = parts[1] || '';
+    if (isBase64) {
+      const byteChars = atob(raw);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      return new Blob([byteArray], { type: contentType });
+    }
+    // Fallback for non-base64 data urls
+    const blob = new Blob([decodeURIComponent(raw)], { type: contentType });
+    return blob;
+  };
+
+  const handleDownloadConvertedMusic = async () => {
+    if (!convertedMusic) return;
+    try {
+      let blob: Blob | null = null;
+      if (convertedMusic.startsWith('data:')) {
+        blob = dataUrlToBlob(convertedMusic);
+      } else {
+        // Fetch the resource as blob (may fail due to CORS if the resource disallows cross-origin requests)
+        const resp = await fetch(convertedMusic);
+        if (!resp.ok) throw new Error(`Failed to fetch audio: ${resp.status}`);
+        blob = await resp.blob();
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = baseFileName(activeBoard?.id);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      console.error('Download failed', e);
+      setError((e && e.message) || 'Failed to download audio.');
+    }
+  };
   const [beatovenStatus, setBeatovenStatus] = useState<string | null>(null);
   const [beatovenTaskId, setBeatovenTaskId] = useState<string | null>(null);
   // promptPreview is intentionally not surfaced in UI; server logs to data/runs.json
@@ -1848,7 +1902,9 @@ export default function Whiteboard() {
               <div className="mt-4">
                 {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
                   <div className="w-full">
-                    <AudioPlayer
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1">
+                        <AudioPlayer
                       src={convertedMusic}
                       style={{
                         borderRadius: '8px',
@@ -1860,6 +1916,11 @@ export default function Whiteboard() {
                       layout="horizontal"
                       preload="metadata"
                     />
+                      </div>
+                      <div className="flex-shrink-0">
+                        <button onClick={handleDownloadConvertedMusic} className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-sm">Download</button>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
