@@ -89,6 +89,60 @@ export default function Whiteboard() {
 
   // Get converted music directly from active board
   const convertedMusic = activeBoard?.convertedMusic || null;
+  // Download handler for the generated music
+  const baseFileName = (boardId?: string) => {
+    const id = boardId || activeBoard?.id || 'track';
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    return `sketch-music-${id}-${ts}.mp3`;
+  };
+
+  const dataUrlToBlob = (dataUrl: string) => {
+    const parts = dataUrl.split(',');
+    const meta = parts[0];
+    const isBase64 = /;base64$/.test(meta) || meta.includes(';base64');
+    const contentTypeMatch = meta.match(/:(.*?);/);
+    const contentType = contentTypeMatch ? contentTypeMatch[1] : 'audio/mpeg';
+    const raw = parts[1] || '';
+    if (isBase64) {
+      const byteChars = atob(raw);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      return new Blob([byteArray], { type: contentType });
+    }
+    // Fallback for non-base64 data urls
+    const blob = new Blob([decodeURIComponent(raw)], { type: contentType });
+    return blob;
+  };
+
+  const handleDownloadConvertedMusic = async () => {
+    if (!convertedMusic) return;
+    try {
+      let blob: Blob | null = null;
+      if (convertedMusic.startsWith('data:')) {
+        blob = dataUrlToBlob(convertedMusic);
+      } else {
+        // Fetch the resource as blob (may fail due to CORS if the resource disallows cross-origin requests)
+        const resp = await fetch(convertedMusic);
+        if (!resp.ok) throw new Error(`Failed to fetch audio: ${resp.status}`);
+        blob = await resp.blob();
+      }
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = baseFileName(activeBoard?.id);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      console.error('Download failed', e);
+      setError((e && e.message) || 'Failed to download audio.');
+    }
+  };
   const [beatovenStatus, setBeatovenStatus] = useState<string | null>(null);
   const [beatovenTaskId, setBeatovenTaskId] = useState<string | null>(null);
   // promptPreview is intentionally not surfaced in UI; server logs to data/runs.json
@@ -1833,20 +1887,18 @@ export default function Whiteboard() {
       {/* Loading overlay with animated visuals during analyzing/composing */}
       {(stage === 'analyzing' || stage === 'composing') && (
         <div className="fixed inset-0 z-40 flex items-center justify-center pointer-events-none">
-          <div className="pointer-events-auto bg-white/90 dark:bg-black/80 rounded-2xl p-8 shadow-xl flex items-center gap-6 w-[min(760px,calc(100%-48px))]">
+          <div className="pointer-events-auto bg-black/80 rounded-2xl p-8 shadow-xl flex items-center gap-6 w-[min(760px,calc(100%-48px))]">
             <div className="w-24 h-24 flex items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 animate-pulse-slower">
               <svg className="h-12 w-12 text-white animate-spin-slow" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
             </div>
             <div className="flex-1">
-              <div className="text-sm font-semibold text-gray-800">{stage === 'analyzing' ? 'Analyzing drawing' : 'Composing music'}</div>
-              <div className="mt-2 text-xs text-gray-600">This may take up to a minute. We&apos;re generating a musical composition that matches your drawing.</div>
-              <div className="mt-4 w-full bg-gray-100 h-2 rounded overflow-hidden">
-                <div className={`h-2 bg-gradient-to-r from-blue-500 to-indigo-500 ${stage === 'composing' ? 'animate-loading-bar' : 'animate-loading-bar-slow'}`} style={{ width: stage === 'composing' ? '60%' : '30%' }} />
+              <div className="text-sm font-semibold text-white">{stage === 'analyzing' ? 'Analyzing drawing' : 'Composing music'}</div>
+              <div className="mt-2 text-xs text-white/80">This may take up to a minute. We&apos;re generating a musical composition that matches your drawing.</div>
+              <div className="mt-4 w-full bg-white/10 h-2 rounded overflow-hidden">
+                <div className={`h-2 bg-gradient-to-r from-blue-400 to-indigo-400 ${stage === 'composing' ? 'animate-loading-bar' : 'animate-loading-bar-slow'}`} style={{ width: stage === 'composing' ? '60%' : '30%' }} />
               </div>
             </div>
-            <div>
-              <button onClick={cancelAnalyze} className="px-4 py-2 rounded-lg bg-white border">Cancel</button>
-            </div>
+            {/* Cancel exists outside this overlay already; remove internal cancel button */}
           </div>
         </div>
       )}
@@ -1920,7 +1972,7 @@ export default function Whiteboard() {
                   return false;
                 })();
                 return (
-                  <div key={step.id} className="flex-1 flex items-center gap-3">
+                  <div key={step.id} className="flex flex-col items-center gap-2 text-center w-32">
                     <div className={`w-10 h-10 flex items-center justify-center rounded-full ${completed ? 'bg-blue-600 text-white' : active ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
                       {active && stage !== 'done' ? (
                         <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
@@ -1930,7 +1982,7 @@ export default function Whiteboard() {
                         <span className="text-sm font-medium">{idx + 1}</span>
                       )}
                     </div>
-                    <div className="flex-1">
+                    <div>
                       <div className={`text-sm font-semibold ${completed ? 'text-gray-800' : active ? 'text-blue-700' : 'text-gray-500'}`}>{step.label}</div>
                     </div>
                   </div>
@@ -1953,32 +2005,42 @@ export default function Whiteboard() {
         {/* Removed duplicate marketing sentence as requested */}
 
         {/* Results area */}
-        <div className="mt-6">
-          {stage === 'done' && convertedMusic && (
-            <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl">
+        <div className="mt-6 flex justify-center">
+          <div className="w-full max-w-3xl">
+            {stage === 'done' && convertedMusic && (
+              <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                 <strong className="text-lg">Generated Music</strong>
               </div>
-              <div className="mt-4">
-                {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
-                  <div className="w-full">
-                    <AudioPlayer
-                      src={convertedMusic}
-                      style={{
-                        borderRadius: '8px',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-                      }}
-                      customAdditionalControls={[]}
-                      showJumpControls={true}
-                      customVolumeControls={[]}
-                      layout="horizontal"
-                      preload="metadata"
-                    />
-                  </div>
-                ) : (
-                  <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
-                )}
+              <div className="mt-4 flex justify-center">
+                <div className="w-full max-w-xl">
+                  {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
+                    <div className="w-full">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <AudioPlayer
+                            src={convertedMusic}
+                            style={{
+                              borderRadius: '8px',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                            }}
+                            customAdditionalControls={[]}
+                            showJumpControls={true}
+                            customVolumeControls={[]}
+                            layout="horizontal"
+                            preload="metadata"
+                          />
+                        </div>
+                        <div className="flex-shrink-0">
+                          <button onClick={handleDownloadConvertedMusic} className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-sm">Download</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
+                  )}
+                </div>
               </div>
               
               {/* Try Again Buttons */}
@@ -2000,6 +2062,7 @@ export default function Whiteboard() {
               </div>
             </div>
           )}
+          </div>
           {error && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700">
               {error}
