@@ -33,21 +33,19 @@ export async function POST(req: NextRequest) {
     const processBoard = async (board: any, index: number): Promise<any> => {
       const humanPrompt = `You are a professional music supervisor creating prompts for AI music generation based on the attached drawing.
 
-Analyze the image and write a natural-language prompt that can be directly used to generate music matching its theme, mood, and visuals. Start exactly with:
+Analyze the image and write a natural-language prompt for Beatoven to generate music. Start exactly with:
 "Background music:"
 
-Include the following details naturally in the paragraph:
-1. Overall image meaning/theme: describe what the image depicts and the message or emotion conveyed specifically and clearly.
-2. Mood: overall emotional tone (e.g., calm, melancholic, energetic).
-3. Genre: a fitting genre (e.g., ambient, lo-fi hip hop, classical piano, synthwave, acoustic folk, cinematic orchestral).
-4. Tempo/BPM: approximate beats per minute suitable for the image.
-5. Key: musical key (e.g., A minor) or "none".
-6. Instruments: lead instruments and percussion that match the theme and visuals.
-7. Texture/Rhythm: musical textures, rhythm, or pace (slow, fast, syncopated, flowing).
-8. Evolution: describe how the track builds, holds, or releases over time.
-9. Duration: ${perBoardDuration} seconds.
+Use **clear, evocative, descriptive language**. Describe:
+1. Overall theme and story of the image.
+2. Mood and tempo using qualitative words (e.g., calm, playful, energetic, slow, uplifting).
+3. Genre/style: e.g., ambient, cinematic orchestral, lo-fi hip hop, synthwave.
+4. Instruments: describe textures and roles (e.g., "bright, melodic piano," "warm, resonant strings," "rhythmic offbeat guitar").
+5. Evolution: how the music flows, builds energy, or creates emotion over time.
+6. Duration: ~${perBoardDuration} seconds.
 
-Keep output 30–100 words, as a single natural paragraph. Only output the final prompt.`;
+**Do NOT use BPM, key, or technical musical terms.**
+Keep output 30–100 words as a single paragraph. Only output the final prompt.`;
 
       try {
         const geminiRes = await fetch(
@@ -115,23 +113,23 @@ Keep output 30–100 words, as a single natural paragraph. Only output the final
       const refinerHuman = `You are a senior music supervisor. Combine the per-segment musical briefs into one unified prompt for Beatoven.
 
 Requirements:
-- Preserve the chronological order of segments.
-- Ensure coherence across tempo, genre, and instrumentation.
-- Smooth transitions between segments (crossfade 1–3s, carry motifs forward).
-- Total track duration: ~${totalDuration}s.
+- Preserve chronological order of segments.
+- Ensure smooth transitions and coherence across mood, style, and instrumentation.
+- Describe overall mood, instrument textures, and how music evolves across the track.
+- Total track duration: ~${totalDuration} seconds.
 
 Output format:
 REFINED_PROMPT:
-Write an 80–160 word natural-language brief ready for Beatoven. Include:
-1. Overall theme/message of the combined boards clearly and specifically based on drawing.
-2. Unified mood and genre.
-3. Tempo/BPM and key (consistent or evolving if necessary).
-4. Core instruments and textures appearing across sections.
-5. Segment evolution: describe how energy builds/holds/releases across the whole track.
-6. Transition style (how one segment flows into the next).
+Write 80–160 words using **evocative, descriptive language** ready for Beatoven. Emphasize mood, instruments, and evolution rather than technical details.
+Include:
+1. Overall theme/message.
+2. Unified mood and style.
+3. Core instruments and textures with adjectives.
+4. Segment evolution: how energy and emotion develop across the track.
+5. Natural transitions between segments.
 
 SEGMENT_TIMINGS:
-One line per segment in order, so that the music has transitions from board to board`;
+One line per segment for reference only; musical description should remain in natural language form.`;
 
       const refinerContents: any[] = [{ parts: [{ text: refinerHuman }] }];
       perBoardResults.forEach((r, idx) => refinerContents.push({ parts: [{ text: `Segment ${idx + 1} (${r.id || r.name}): ${r.brief || r.raw} Duration: ${r.segment_duration}s.` }] }));
