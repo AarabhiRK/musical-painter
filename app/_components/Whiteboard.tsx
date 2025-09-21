@@ -1859,7 +1859,7 @@ export default function Whiteboard() {
                   return false;
                 })();
                 return (
-                  <div key={step.id} className="flex-1 flex items-center gap-3">
+                  <div key={step.id} className="flex flex-col items-center gap-2 text-center w-32">
                     <div className={`w-10 h-10 flex items-center justify-center rounded-full ${completed ? 'bg-blue-600 text-white' : active ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
                       {active && stage !== 'done' ? (
                         <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" fill="none" strokeDasharray="60" strokeLinecap="round"/></svg>
@@ -1869,7 +1869,7 @@ export default function Whiteboard() {
                         <span className="text-sm font-medium">{idx + 1}</span>
                       )}
                     </div>
-                    <div className="flex-1">
+                    <div>
                       <div className={`text-sm font-semibold ${completed ? 'text-gray-800' : active ? 'text-blue-700' : 'text-gray-500'}`}>{step.label}</div>
                     </div>
                   </div>
@@ -1892,42 +1892,46 @@ export default function Whiteboard() {
         {/* Removed duplicate marketing sentence as requested */}
 
         {/* Results area */}
-        <div className="mt-6">
-          {stage === 'done' && convertedMusic && (
-            <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900 max-w-xl">
+        <div className="mt-6 flex justify-center">
+          <div className="w-full max-w-3xl">
+            {stage === 'done' && convertedMusic && (
+              <div className="mt-6 p-6 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl text-blue-900">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                 <strong className="text-lg">Generated Music</strong>
               </div>
-              <div className="mt-4">
-                {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
-                  <div className="w-full">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1">
-                        <AudioPlayer
-                      src={convertedMusic}
-                      style={{
-                        borderRadius: '8px',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-                      }}
-                      customAdditionalControls={[]}
-                      showJumpControls={true}
-                      customVolumeControls={[]}
-                      layout="horizontal"
-                      preload="metadata"
-                    />
-                      </div>
-                      <div className="flex-shrink-0">
-                        <button onClick={handleDownloadConvertedMusic} className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-sm">Download</button>
+              <div className="mt-4 flex justify-center">
+                <div className="w-full max-w-xl">
+                  {convertedMusic.startsWith('data:audio') || convertedMusic.match(/^https?:\/\//) ? (
+                    <div className="w-full">
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <AudioPlayer
+                            src={convertedMusic}
+                            style={{
+                              borderRadius: '8px',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                            }}
+                            customAdditionalControls={[]}
+                            showJumpControls={true}
+                            customVolumeControls={[]}
+                            layout="horizontal"
+                            preload="metadata"
+                          />
+                        </div>
+                        <div className="flex-shrink-0">
+                          <button onClick={handleDownloadConvertedMusic} className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 text-sm">Download</button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
-                )}
+                  ) : (
+                    <pre className="text-left whitespace-pre-wrap bg-white p-3 rounded-md text-sm text-gray-800">{convertedMusic}</pre>
+                  )}
+                </div>
               </div>
             </div>
           )}
+          </div>
           {error && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700">
               {error}
