@@ -31,23 +31,49 @@ export async function POST(req: NextRequest) {
 
     // 1️⃣ Generate per-board musical briefs (parallel processing)
     const processBoard = async (board: any, index: number): Promise<any> => {
-      const humanPrompt = `You are a professional music supervisor creating prompts for AI music generation based on the attached drawing.
+      const humanPrompt = `You are a professional music supervisor analyzing a drawing to create a musical prompt. Follow this analysis hierarchy:
 
-Analyze the image and write a natural-language prompt that can be directly used to generate music matching its theme, mood, and visuals. Start exactly with:
-"Background music:"
+STEP 1 - IDENTIFY CONTENT TYPE:
+First, determine what type of drawing this is:
+- REPRESENTATIONAL: Contains recognizable objects, people, scenes, or landscapes
+- ABSTRACT: Contains shapes, patterns, or non-representational elements
+- MINIMAL: Very few strokes, mostly empty space, or extremely simple
 
-Include the following details naturally in the paragraph:
-1. Overall image meaning/theme: describe what the image depicts and the message or emotion conveyed specifically and clearly.
-2. Mood: overall emotional tone (e.g., calm, melancholic, energetic).
-3. Genre: a fitting genre (e.g., ambient, lo-fi hip hop, classical piano, synthwave, acoustic folk, cinematic orchestral).
-4. Tempo/BPM: approximate beats per minute suitable for the image.
-5. Key: musical key (e.g., A minor) or "none".
-6. Instruments: lead instruments and percussion that match the theme and visuals.
-7. Texture/Rhythm: musical textures, rhythm, or pace (slow, fast, syncopated, flowing).
-8. Evolution: describe how the track builds, holds, or releases over time.
-9. Duration: ${perBoardDuration} seconds.
+STEP 2 - CONTENT ANALYSIS (choose the most appropriate):
 
-Keep output 30–100 words, as a single natural paragraph. Only output the final prompt.`;
+If REPRESENTATIONAL (recognizable elements):
+- Identify specific objects, scenes, or subjects (e.g., "mountain landscape", "person's face", "city skyline")
+- Describe the mood and atmosphere these elements suggest
+- Choose genre based on content: cinematic orchestral for landscapes, ambient electronic for faces, acoustic folk for nature scenes
+
+If ABSTRACT (shapes/patterns but no clear objects):
+- Analyze the stroke patterns, shapes, and composition
+- Describe the energy and movement suggested by the forms
+- Choose genre based on patterns: ambient electronic for flowing shapes, cinematic orchestral for geometric forms, lo-fi hip hop for organic patterns
+
+If MINIMAL (very few strokes or mostly empty):
+- Focus primarily on color palette and overall mood
+- Use ethereal, ambient, or minimalist musical styles
+- Keep tempo slow (60-80 BPM) and texture sparse
+
+STEP 3 - MUSICAL TRANSLATION:
+Create a music prompt that matches your analysis. Use this format:
+
+BACKGROUND_MUSIC: [Start with "Background music:"]
+
+CONTENT_TYPE: [REPRESENTATIONAL/ABSTRACT/MINIMAL]
+
+THEME: [What you actually see or the overall mood if abstract]
+
+MOOD: [Single emotional tone: calm/melancholic/energetic/mysterious/etc.]
+
+GENRE: [Beatoven-compatible: cinematic orchestral/ambient electronic/acoustic folk/lo-fi hip hop/minimalist ambient]
+
+TEMPO: [BPM range based on content energy]
+
+TEXTURE: [Musical density: sparse/minimal/moderate/rich]
+
+Keep total output 40-80 words. Better to be simple and accurate than complex and wrong.`;
 
       try {
         const geminiRes = await fetch(
@@ -112,23 +138,33 @@ Keep output 30–100 words, as a single natural paragraph. Only output the final
     // 3️⃣ Optional Gemini refiner for a polished prompt
     let refinedPrompt: string | null = null;
     try {
-      const refinerHuman = `You are a senior music supervisor. Combine the per-segment musical briefs into one unified prompt for Beatoven.
+      const refinerHuman = `You are a senior music supervisor. Combine the per-segment musical briefs into one unified prompt for Beatoven AI music generation.
+
+ABOUT BEATOVEN:
+Beatoven is an AI music generation service that creates background music from text prompts. It works best with:
+- Clear, descriptive language about mood, genre, and instruments
+- Specific tempo and key information
+- Cinematic and ambient music styles
+- Smooth, flowing compositions suitable for background use
+- Natural language descriptions rather than technical music notation
 
 Requirements:
 - Preserve the chronological order of segments.
 - Ensure coherence across tempo, genre, and instrumentation.
 - Smooth transitions between segments (crossfade 1–3s, carry motifs forward).
 - Total track duration: ~${totalDuration}s.
+- Use Beatoven-friendly language (avoid complex music theory terms).
 
 Output format:
 REFINED_PROMPT:
 Write an 80–160 word natural-language brief ready for Beatoven. Include:
 1. Overall theme/message of the combined boards clearly and specifically based on drawing.
-2. Unified mood and genre.
-3. Tempo/BPM and key (consistent or evolving if necessary).
-4. Core instruments and textures appearing across sections.
-5. Segment evolution: describe how energy builds/holds/releases across the whole track.
-6. Transition style (how one segment flows into the next).
+2. Unified genre (use Beatoven-compatible genres like "cinematic orchestral", "ambient electronic", "acoustic folk").
+3. Mood progression across segments should also be somewhat unified but not necessarily the same as genre.
+4. Tempo/BPM and key (consistent or evolving if necessary).
+5. Core instruments and textures appearing across sections.
+6. Segment evolution: describe how energy builds/holds/releases across the whole track.
+7. Transition style (how one segment flows into the next).
 
 SEGMENT_TIMINGS:
 One line per segment in order, so that the music has transitions from board to board`;
