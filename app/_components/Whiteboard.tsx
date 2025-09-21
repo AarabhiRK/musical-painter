@@ -493,9 +493,28 @@ export default function Whiteboard() {
   const strokes = activeBoard?.strokes || [];
   const shapes = activeBoard?.shapes || [];
   
-  // Undo/Redo state management
-  const [history, setHistory] = useState<{strokes: Stroke[], shapes: Shape[]}[]>([{strokes: [], shapes: []}]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  // Undo/Redo state management - per board
+  const [boardHistories, setBoardHistories] = useState<Record<string, {strokes: Stroke[], shapes: Shape[]}[]>>({});
+  const [boardHistoryIndices, setBoardHistoryIndices] = useState<Record<string, number>>({});
+  
+  // Get current board's history
+  const currentHistory = boardHistories[activeBoardId] || [{strokes: [], shapes: []}];
+  const currentHistoryIndex = boardHistoryIndices[activeBoardId] || 0;
+
+  // Initialize history for boards that don't have it yet
+  useEffect(() => {
+    if (!boardHistories[activeBoardId]) {
+      const initialHistory = [{strokes: activeBoard?.strokes || [], shapes: activeBoard?.shapes || []}];
+      setBoardHistories(prev => ({
+        ...prev,
+        [activeBoardId]: initialHistory
+      }));
+      setBoardHistoryIndices(prev => ({
+        ...prev,
+        [activeBoardId]: 0
+      }));
+    }
+  }, [activeBoardId, activeBoard?.strokes, activeBoard?.shapes, boardHistories]);
 
   // Brush properties helper functions
   const getBrushProperties = (type: BrushType, baseWidth: number) => {
@@ -614,7 +633,7 @@ export default function Whiteboard() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [historyIndex, history]);
+  }, [currentHistoryIndex, currentHistory]);
 
 
   // Cleanup Konva Stage on unmount
@@ -728,13 +747,21 @@ export default function Whiteboard() {
     }
   }, [toolMode, isDrawingShape, currentShape, current, strokes, shapes, activeBoardId]);
 
-  // Add to history
+  // Add to history - per board
   const addToHistory = useCallback((newState: {strokes: Stroke[], shapes: Shape[]}) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(newState);
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  }, [history, historyIndex]);
+    const boardHistory = currentHistory.slice(0, currentHistoryIndex + 1);
+    boardHistory.push(newState);
+    
+    setBoardHistories(prev => ({
+      ...prev,
+      [activeBoardId]: boardHistory
+    }));
+    
+    setBoardHistoryIndices(prev => ({
+      ...prev,
+      [activeBoardId]: boardHistory.length - 1
+    }));
+  }, [currentHistory, currentHistoryIndex, activeBoardId]);
 
   // Global mouse up listener to handle mouse release outside whiteboard
   useEffect(() => {
@@ -779,12 +806,16 @@ export default function Whiteboard() {
     return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
   }, [toolMode, isDrawingShape, currentShape, current, isMouseDown, strokes, shapes, activeBoardId, addToHistory]);
 
-  // Undo function
+  // Undo function - per board
   const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      const newState = history[newIndex];
-      setHistoryIndex(newIndex);
+    if (currentHistoryIndex > 0) {
+      const newIndex = currentHistoryIndex - 1;
+      const newState = currentHistory[newIndex];
+      
+      setBoardHistoryIndices(prev => ({
+        ...prev,
+        [activeBoardId]: newIndex
+      }));
       
       // Update the active board directly
       setBoards(prevBoards => 
@@ -795,14 +826,18 @@ export default function Whiteboard() {
         )
       );
     }
-  }, [historyIndex, history, activeBoardId]);
+  }, [currentHistoryIndex, currentHistory, activeBoardId]);
 
-  // Redo function
+  // Redo function - per board
   const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
-      const newState = history[newIndex];
-      setHistoryIndex(newIndex);
+    if (currentHistoryIndex < currentHistory.length - 1) {
+      const newIndex = currentHistoryIndex + 1;
+      const newState = currentHistory[newIndex];
+      
+      setBoardHistoryIndices(prev => ({
+        ...prev,
+        [activeBoardId]: newIndex
+      }));
       
       // Update the active board directly
       setBoards(prevBoards => 
@@ -813,7 +848,7 @@ export default function Whiteboard() {
         )
       );
     }
-  }, [historyIndex, history, activeBoardId]);
+  }, [currentHistoryIndex, currentHistory, activeBoardId]);
 
   const clear = useCallback(() => {
     // Update the active board directly
@@ -1670,9 +1705,9 @@ export default function Whiteboard() {
             <div className="flex items-center gap-2 border-r border-gray-200 pr-4 mr-2">
               <button
                 onClick={undo}
-                disabled={historyIndex <= 0}
+                disabled={currentHistoryIndex <= 0}
                 className={`px-4 py-2 rounded-xl border transition-all duration-200 ${
-                  historyIndex <= 0
+                  currentHistoryIndex <= 0
                     ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
                     : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
                 }`}
@@ -1682,9 +1717,9 @@ export default function Whiteboard() {
               </button>
               <button
                 onClick={redo}
-                disabled={historyIndex >= history.length - 1}
+                disabled={currentHistoryIndex >= currentHistory.length - 1}
                 className={`px-4 py-2 rounded-xl border transition-all duration-200 ${
-                  historyIndex >= history.length - 1
+                  currentHistoryIndex >= currentHistory.length - 1
                     ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
                     : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50 hover:border-gray-300"
                 }`}
